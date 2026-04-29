@@ -17,7 +17,7 @@ fi
 
 python3 -u main.py \
 --model-dir "${OUTPUT_DIR}" \
---pretrained-model bert-base-uncased \
+--pretrained-model distilbert-base-uncased \
 --pooling mean \
 --lr 5e-5 \
 --use-link-graph \
@@ -31,6 +31,6 @@ python3 -u main.py \
 --use-self-negative \
 --pre-batch 0 \
 --finetune-t \
---epochs 50 \
---workers 4 \
+--epochs 10 \
+--workers 2 \
 --max-to-keep 3 "$@"
