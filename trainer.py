@@ -1,3 +1,8 @@
+from metric_classification import classification_metrics, find_global_threshold
+import numpy as np
+import time
+from evaluate import eval_single_direction, compute_metrics
+from predict import BertPredictor
 import glob
 import json
 import torch
@@ -17,6 +22,7 @@ from metric import accuracy
 from models import build_model, ModelOutput
 from dict_hub import build_tokenizer
 from logger_config import logger
+import os 
 
 
 class Trainer:
@@ -71,10 +77,120 @@ class Trainer:
         if self.args.use_amp:
             self.scaler = torch.cuda.amp.GradScaler()
 
+        total_start_time = time.time()
+        train_time = 0.0
+
         for epoch in range(self.args.epochs):
+            epoch_train_start = time.time()
             # train for one epoch
             self.train_epoch(epoch)
+            train_time += time.time() - epoch_train_start
+
+            val_start = time.time()
             self._run_eval(epoch=epoch)
+            val_time = time.time() - val_start
+
+            # Evaluate MR, MRR, Hits@1/3/10 on valid set using evaluate.py logic
+            if self.args.valid_path and self.args.model_dir:
+                ckt_path = '{}/checkpoint_epoch{}.mdl'.format(self.args.model_dir, epoch)
+                if not os.path.exists(ckt_path):
+                    ckt_path = '{}/checkpoint_{}_0.mdl'.format(self.args.model_dir, epoch)
+                if os.path.exists(ckt_path):
+                    predictor = BertPredictor()
+                    predictor.load(ckt_path)
+                    from dict_hub import get_entity_dict
+                    entity_dict = get_entity_dict()
+                    entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs)
+                    forward_metrics = eval_single_direction(predictor, entity_tensor, eval_forward=True)
+                    backward_metrics = eval_single_direction(predictor, entity_tensor, eval_forward=False)
+                    metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
+                    log_str = f"[EPOCH {epoch}]\nForward: {json.dumps(forward_metrics)}\nBackward: {json.dumps(backward_metrics)}\nAverage: {json.dumps(metrics)}"
+                    print(log_str)
+                    logger.info(log_str)
+                    with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
+                        f.write(log_str + '\n')
+
+            # Evaluate triple classification metrics on a separate labeled validation file.
+            valid_label_path = self.args.valid_label_path or None
+            if valid_label_path is None and self.args.valid_path:
+                if self.args.valid_path.endswith('_w_label.txt'):
+                    valid_label_path = self.args.valid_path
+                elif self.args.valid_path.endswith('.txt'):
+                    valid_label_path = self.args.valid_path.replace('.txt', '_w_label.txt')
+            if valid_label_path and os.path.exists(valid_label_path):
+                # Đọc dữ liệu và label
+                from doc import load_data
+                valid_exs = load_data(valid_label_path, add_forward_triplet=False, add_backward_triplet=False)
+                y_true = [ex.label for ex in valid_exs]
+                # Dự đoán xác suất (logit) và nhãn
+                y_prob = []
+                batch_size = 128
+                for i in range(0, len(valid_exs), batch_size):
+                    batch = valid_exs[i:i+batch_size]
+                    batch_vec = [ex.vectorize() for ex in batch]
+                    batch_dict = collate(batch_vec)
+                    if torch.cuda.is_available():
+                        for k in batch_dict:
+                            if isinstance(batch_dict[k], torch.Tensor):
+                                batch_dict[k] = batch_dict[k].cuda()
+                        predictor.model.cuda()
+                    output_dict = predictor.model(**batch_dict)
+                    logits = predictor.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                    prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+                    y_prob.extend(prob.tolist())
+                # Tìm threshold tối ưu trên validation
+                threshold = find_global_threshold(y_true, y_prob)
+                y_pred = (np.array(y_prob) > threshold).astype(int).tolist()
+                metrics_cls = classification_metrics(y_true, y_pred, y_prob)
+                log_cls = f"[EPOCH {epoch}] Triple Classification: {json.dumps(metrics_cls)}"
+                log_thresh = f"[EPOCH {epoch}] Best threshold on validation: {threshold:.6f}"
+                print(log_thresh)
+                logger.info(log_thresh)
+                log_cls = f"[EPOCH {epoch}] Triple Classification: {json.dumps(metrics_cls)}"
+                print(log_cls)
+                logger.info(log_cls)
+                with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
+                    f.write(log_thresh + '\n')
+                    f.write(log_cls + '\n')
+
+        # Evaluate triple classification on test set with current model (inplace, no checkpoint)
+        test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
+        if self.args.valid_label_path:
+            test_label_path = self.args.valid_label_path.replace('valid_w_label.txt', 'test_w_label.txt')
+        if test_label_path and os.path.exists(test_label_path):
+            log_path = os.path.join(self.args.model_dir, 'test_metrics.log')
+            self.evaluate_triple_classification_inplace(self.model, test_label_path, log_path)
+
+        # Evaluate link prediction on test set with current model (inplace, no checkpoint)
+        # Nếu valid_path là _w_label.txt, lấy test_w_label.txt (từ đó chỉ lấy label=1 cho link prediction)
+        # Nếu valid_path là .txt, lấy test.txt
+        if self.args.valid_path:
+            if self.args.valid_path.endswith('_w_label.txt'):
+                test_eval_path = self.args.valid_path.replace('valid_w_label.txt', 'test_w_label.txt')
+            elif self.args.valid_path.endswith('.txt'):
+                test_eval_path = self.args.valid_path.replace('valid.txt', 'test.txt')
+            else:
+                test_eval_path = None
+        else:
+            test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
+        if test_eval_path and os.path.exists(test_eval_path):
+            test_entity_dict = build_tokenizer(self.args)
+            test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
+            self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path)
+
+        # Link prediction evaluation on validation set after each epoch
+        valid_path = self.args.valid_path
+        if valid_path and os.path.exists(valid_path):
+            from dict_hub import get_entity_dict
+            entity_dict = get_entity_dict()
+            log_path = os.path.join(self.args.model_dir, 'valid_linkpred_metrics.log')
+            self.evaluate_link_prediction_inplace(self.model, valid_path, entity_dict, log_path, eval_forward=True)
+
+        total_time = time.time() - total_start_time
+        print(f"[Timing] Training time (s): {round(train_time, 2)}")
+        print(f"[Timing] Total run time (s): {round(total_time, 2)}")
+        logger.info(f"[Timing] Training time (s): {round(train_time, 2)}")
+        logger.info(f"[Timing] Total run time (s): {round(total_time, 2)}")
 
     @torch.no_grad()
     def _run_eval(self, epoch, step=0):
@@ -206,3 +322,84 @@ class Trainer:
                                                    num_training_steps=num_training_steps)
         else:
             assert False, 'Unknown lr scheduler: {}'.format(self.args.scheduler)
+
+    def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=128):
+        import numpy as np
+        import json
+        import torch
+        import os
+        from doc import load_data
+        from metric_classification import classification_metrics, find_global_threshold
+        model.eval()
+        if not os.path.exists(label_file):
+            print(f"[EVAL] {label_file} not found, skip evaluation.")
+            return
+        eval_set = 'TEST' if 'test' in label_file else 'VALID'
+        print(f"\n[{eval_set}] Evaluating triple classification inplace on {label_file} ...")
+        eval_exs = load_data(label_file, add_forward_triplet=False, add_backward_triplet=False)
+        y_true = [ex.label for ex in eval_exs]
+        y_prob = []
+        with torch.no_grad():
+            for i in range(0, len(eval_exs), batch_size):
+                batch = eval_exs[i:i+batch_size]
+                batch_vec = [ex.vectorize() for ex in batch]
+                batch_dict = collate(batch_vec)
+                if torch.cuda.is_available():
+                    for k in batch_dict:
+                        if isinstance(batch_dict[k], torch.Tensor):
+                            batch_dict[k] = batch_dict[k].cuda()
+                    model.cuda()
+                output_dict = model(**batch_dict)
+                logits = model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+                y_prob.extend(prob.tolist())
+        threshold = find_global_threshold(y_true, y_prob)
+        y_pred = (np.array(y_prob) > threshold).astype(int).tolist()
+        metrics_cls = classification_metrics(y_true, y_pred, y_prob)
+        log_thresh = f"[{eval_set}] Best threshold: {threshold:.6f}"
+        log_cls = f"[{eval_set}] Triple Classification: {json.dumps(metrics_cls)}"
+        print(log_thresh)
+        print(log_cls)
+        logger.info(log_thresh)
+        logger.info(log_cls)
+        with open(output_log_path, 'a', encoding='utf-8') as f:
+            f.write(log_thresh + '\n')
+            f.write(log_cls + '\n')
+
+    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True):
+        import torch
+        import json
+        from doc import load_data
+        model.eval()
+        if not os.path.exists(eval_path):
+            print(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
+            return
+        eval_set = 'TEST' if 'test' in eval_path else 'VALID'
+        print(f"\n[{eval_set}] Evaluating link prediction inplace on {eval_path} ...")
+        examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
+        hr_vectors, _ = [], []
+        with torch.no_grad():
+            for i in range(0, len(examples), batch_size):
+                batch = examples[i:i+batch_size]
+                batch_vec = [ex.vectorize() for ex in batch]
+                batch_dict = {k: [d[k] for d in batch_vec] for k in batch_vec[0] if k != 'obj'}
+                for k in batch_dict:
+                    batch_dict[k] = torch.tensor(batch_dict[k]) if isinstance(batch_dict[k][0], int) else batch_dict[k]
+                if torch.cuda.is_available():
+                    for k in batch_dict:
+                        if isinstance(batch_dict[k], torch.Tensor):
+                            batch_dict[k] = batch_dict[k].cuda()
+                    model.cuda()
+                outputs = model(**batch_dict)
+                hr_vectors.append(outputs['hr_vector'])
+        hr_tensor = torch.cat(hr_vectors, dim=0)
+        entities_tensor = model(**{k: torch.tensor([d[k] for d in entity_dict.entity_exs]) for k in entity_dict.entity_exs[0] if k != 'obj'})['ent_vectors']
+        if torch.cuda.is_available():
+            hr_tensor = hr_tensor.cuda()
+            entities_tensor = entities_tensor.cuda()
+        target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
+        topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entities_tensor, target=target, examples=examples, batch_size=batch_size)
+        log_str = f"[{eval_set}] Link Prediction Metrics: {json.dumps(metrics)}"
+        print(log_str)
+        with open(output_log_path, 'a', encoding='utf-8') as f:
+            f.write(log_str + '\n')

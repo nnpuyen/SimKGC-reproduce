@@ -23,6 +23,7 @@ python3 -u main.py \
 --use-link-graph \
 --train-path "${DATA_DIR}/train.txt.json" \
 --valid-path "${DATA_DIR}/valid.txt.json" \
+--valid-label-path "${DATA_DIR}/valid_w_label.txt" \
 --task ${TASK} \
 --batch-size 512 \
 --print-freq 20 \

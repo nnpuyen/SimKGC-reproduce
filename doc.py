@@ -58,10 +58,11 @@ def get_neighbor_desc(head_id: str, tail_id: str = None) -> str:
 
 class Example:
 
-    def __init__(self, head_id, relation, tail_id, **kwargs):
+    def __init__(self, head_id, relation, tail_id, label=None, **kwargs):
         self.head_id = head_id
         self.tail_id = tail_id
         self.relation = relation
+        self.label = int(label) if label is not None else None
 
     @property
     def head_desc(self):
@@ -101,13 +102,16 @@ class Example:
         tail_word = _parse_entity_name(self.tail)
         tail_encoded_inputs = _custom_tokenize(text=_concat_name_desc(tail_word, tail_desc))
 
-        return {'hr_token_ids': hr_encoded_inputs['input_ids'],
-                'hr_token_type_ids': hr_encoded_inputs['token_type_ids'],
-                'tail_token_ids': tail_encoded_inputs['input_ids'],
-                'tail_token_type_ids': tail_encoded_inputs['token_type_ids'],
-                'head_token_ids': head_encoded_inputs['input_ids'],
-                'head_token_type_ids': head_encoded_inputs['token_type_ids'],
-                'obj': self}
+        out = {'hr_token_ids': hr_encoded_inputs['input_ids'],
+               'hr_token_type_ids': hr_encoded_inputs['token_type_ids'],
+               'tail_token_ids': tail_encoded_inputs['input_ids'],
+               'tail_token_type_ids': tail_encoded_inputs['token_type_ids'],
+               'head_token_ids': head_encoded_inputs['input_ids'],
+               'head_token_type_ids': head_encoded_inputs['token_type_ids'],
+               'obj': self}
+        if self.label is not None:
+            out['label'] = self.label
+        return out
 
 
 class Dataset(torch.utils.data.dataset.Dataset):
@@ -136,23 +140,37 @@ class Dataset(torch.utils.data.dataset.Dataset):
 def load_data(path: str,
               add_forward_triplet: bool = True,
               add_backward_triplet: bool = True) -> List[Example]:
-    assert path.endswith('.json'), 'Unsupported format: {}'.format(path)
+    # Hỗ trợ đọc file .json (link prediction) và .txt (triple classification)
     assert add_forward_triplet or add_backward_triplet
     logger.info('In test mode: {}'.format(args.is_test))
 
-    data = json.load(open(path, 'r', encoding='utf-8'))
-    logger.info('Load {} examples from {}'.format(len(data), path))
-
-    cnt = len(data)
     examples = []
-    for i in range(cnt):
-        obj = data[i]
-        if add_forward_triplet:
-            examples.append(Example(**obj))
-        if add_backward_triplet:
-            examples.append(Example(**reverse_triplet(obj)))
-        data[i] = None
-
+    if path.endswith('.json'):
+        data = json.load(open(path, 'r', encoding='utf-8'))
+        logger.info('Load {} examples from {}'.format(len(data), path))
+        cnt = len(data)
+        for i in range(cnt):
+            obj = data[i]
+            if add_forward_triplet:
+                examples.append(Example(**obj))
+            if add_backward_triplet:
+                examples.append(Example(**reverse_triplet(obj)))
+            data[i] = None
+    elif path.endswith('.txt'):
+        # Định dạng: head_id\trelation\ttail_id\tlabel\n
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                fs = line.strip().split('\t')
+                if len(fs) == 4:
+                    head_id, relation, tail_id, label = fs
+                    # Nếu dùng cho link prediction, chỉ lấy label=1
+                    if (add_forward_triplet or add_backward_triplet) and str(label) == '1':
+                        examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label=label))
+                    # Nếu dùng cho classification, lấy cả 0 và 1
+                    elif not (add_forward_triplet or add_backward_triplet):
+                        examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label=label))
+    else:
+        raise ValueError(f'Unsupported format: {path}')
     return examples
 
 

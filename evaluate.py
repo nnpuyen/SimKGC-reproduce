@@ -8,11 +8,12 @@ from typing import List, Tuple
 from dataclasses import dataclass, asdict
 
 from config import args
-from doc import load_data, Example
+from doc import load_data, Example, collate
 from predict import BertPredictor
 from dict_hub import get_entity_dict, get_all_triplet_dict
 from triplet import EntityDict
 from rerank import rerank_by_graph
+from metric_classification import classification_metrics, find_global_threshold
 from logger_config import logger
 
 
@@ -21,6 +22,42 @@ def _setup_entity_dict() -> EntityDict:
         return EntityDict(entity_dict_dir=os.path.dirname(args.valid_path),
                           inductive_test_path=args.valid_path)
     return get_entity_dict()
+
+
+def _resolve_label_path() -> str:
+    candidates = []
+    if args.valid_path.endswith('.json'):
+        candidates.append(args.valid_path[:-5])
+    candidates.append(args.valid_path)
+    if args.valid_path.endswith('.txt'):
+        candidates.append(args.valid_path + '.json')
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return ''
+
+
+def _load_classification_examples(label_path: str) -> List[Example]:
+    examples = []
+    if label_path.endswith('.json'):
+        data = json.load(open(label_path, 'r', encoding='utf-8'))
+        for obj in data:
+            if 'label' in obj:
+                examples.append(Example(**obj))
+        return examples
+
+    if label_path.endswith('.txt'):
+        with open(label_path, 'r', encoding='utf-8') as reader:
+            for line in reader:
+                fs = line.strip().split('\t')
+                if len(fs) != 4:
+                    continue
+                head_id, relation, tail_id, label = fs
+                examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label=label))
+        return examples
+
+    raise ValueError('Unsupported label format: {}'.format(label_path))
 
 
 entity_dict = _setup_entity_dict()
@@ -122,12 +159,19 @@ def predict_by_split():
     metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
     logger.info('Averaged metrics: {}'.format(metrics))
 
-    prefix, basename = os.path.dirname(args.eval_model_path), os.path.basename(args.eval_model_path)
+    output_dir = args.output_dir or args.model_dir or os.getcwd()
+    os.makedirs(output_dir, exist_ok=True)
+    basename = os.path.basename(args.eval_model_path) if args.eval_model_path else 'model'
     split = os.path.basename(args.valid_path)
-    with open('{}/metrics_{}_{}.json'.format(prefix, split, basename), 'w', encoding='utf-8') as writer:
+    with open(os.path.join(output_dir, f"metrics_{split}_{basename}.json"), 'w', encoding='utf-8') as writer:
         writer.write('forward metrics: {}\n'.format(json.dumps(forward_metrics)))
         writer.write('backward metrics: {}\n'.format(json.dumps(backward_metrics)))
         writer.write('average metrics: {}\n'.format(json.dumps(metrics)))
+
+    label_path = _resolve_label_path()
+    if label_path:
+        classification_metrics_dict = evaluate_triple_classification(predictor, label_path, output_dir)
+        logger.info('Triple classification metrics: {}'.format(json.dumps(classification_metrics_dict)))
 
 
 def eval_single_direction(predictor: BertPredictor,
@@ -164,13 +208,59 @@ def eval_single_direction(predictor: BertPredictor,
                              correct=pred_idx == target[idx])
         pred_infos.append(pred_info)
 
-    prefix, basename = os.path.dirname(args.eval_model_path), os.path.basename(args.eval_model_path)
+    output_dir = args.output_dir or args.model_dir or os.getcwd()
+    os.makedirs(output_dir, exist_ok=True)
+    basename = os.path.basename(args.eval_model_path) if args.eval_model_path else 'model'
     split = os.path.basename(args.valid_path)
-    with open('{}/eval_{}_{}_{}.json'.format(prefix, split, eval_dir, basename), 'w', encoding='utf-8') as writer:
+    out_path = os.path.join(output_dir, f"eval_{split}_{eval_dir}_{basename}.json")
+    with open(out_path, 'w', encoding='utf-8') as writer:
         writer.write(json.dumps([asdict(info) for info in pred_infos], ensure_ascii=False, indent=4))
 
     logger.info('Evaluation takes {} seconds'.format(round(time() - start_time, 3)))
     return metrics
+
+
+@torch.no_grad()
+def evaluate_triple_classification(predictor: BertPredictor, label_path: str, output_dir: str,
+                                   batch_size=128) -> dict:
+    examples = _load_classification_examples(label_path)
+    if not examples or all(ex.label is None for ex in examples):
+        logger.info('No labeled examples found in {}; skip triple classification evaluation.'.format(label_path))
+        return {}
+
+    y_true = [ex.label for ex in examples]
+    y_prob = []
+    predictor.model.eval()
+    for start in range(0, len(examples), batch_size):
+        batch = examples[start:start + batch_size]
+        batch_vec = [ex.vectorize() for ex in batch]
+        batch_dict = collate(batch_vec)
+        if torch.cuda.is_available():
+            for key in batch_dict:
+                if isinstance(batch_dict[key], torch.Tensor):
+                    batch_dict[key] = batch_dict[key].cuda()
+            predictor.model.cuda()
+        output_dict = predictor.model(**batch_dict)
+        logits = predictor.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+        prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+        y_prob.extend(prob.tolist())
+
+    threshold = find_global_threshold(y_true, y_prob)
+    y_pred = (torch.tensor(y_prob) > threshold).long().tolist()
+    metrics_cls = classification_metrics(y_true, y_pred, y_prob)
+
+    log_thresh = '[TEST] Best threshold on test: {:.6f}'.format(threshold)
+    log_cls = '[TEST] Triple Classification: {}'.format(json.dumps(metrics_cls))
+    print(log_thresh)
+    print(log_cls)
+    logger.info(log_thresh)
+    logger.info(log_cls)
+
+    with open(os.path.join(output_dir, 'test_metrics.log'), 'a', encoding='utf-8') as writer:
+        writer.write(log_thresh + '\n')
+        writer.write(log_cls + '\n')
+
+    return metrics_cls
 
 
 if __name__ == '__main__':

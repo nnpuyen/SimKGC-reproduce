@@ -69,8 +69,9 @@ def _load_wn18rr_texts(path: str):
 
 def _process_line_wn18rr(line: str) -> dict:
     fs = line.strip().split('\t')
-    assert len(fs) == 3, 'Expect 3 fields for {}'.format(line)
+    assert len(fs) in (3, 4), 'Expect 3 or 4 fields for {}'.format(line)
     head_id, relation, tail_id = fs[0], fs[1], fs[2]
+    # Some WN18RR files include an extra label column; preprocessing only needs the triple.
     _, head, _ = wn18rr_id2ent[head_id]
     _, tail, _ = wn18rr_id2ent[tail_id]
     example = {'head_id': head_id,
