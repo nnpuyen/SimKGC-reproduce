@@ -117,9 +117,9 @@ class Example:
 class Dataset(torch.utils.data.dataset.Dataset):
 
     def __init__(self, path, task, examples=None):
-        self.path_list = path.split(',')
+        self.path_list = path.split(',') if path else []
         self.task = task
-        assert all(os.path.exists(path) for path in self.path_list) or examples
+        assert examples or all(os.path.exists(p) for p in self.path_list if p)
         if examples:
             self.examples = examples
         else:

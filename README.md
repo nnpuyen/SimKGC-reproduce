@@ -116,6 +116,79 @@ Be aware that smaller batch size will hurt the performance for contrastive train
 No. Some input masks require access to batch data on all GPUs, 
 so currently it only supports data parallel training for ease of implementation.
 
+## DirectAU Integration
+
+This codebase now includes an optional DirectAU mode that enhances SimKGC with:
+- **Strict L2 normalization** on all encoder outputs for stable representation geometry
+- **Alignment + Uniformity loss** replacing the InfoNCE loss for better representation learning (no negative sampling)
+- **Chunked inference** for efficient evaluation on large entity sets
+- **Keeps original pair-encoder architecture** — head+relation encoded together, tail encoded separately
+
+Key design: DirectAU applies strict normalization + new loss to the same encoder architecture as SimKGC, without modifying how queries and targets are encoded.
+
+### Quick Start with DirectAU
+
+Training with DirectAU on WN18RR:
+```bash
+OUTPUT_DIR=./checkpoint/wn18rr_directau/ python main.py \
+    --task wn18rr \
+    --pretrained-model distilbert-base-uncased \
+    --train-path data/WN18RR/train.txt \
+    --valid-path data/WN18RR/valid.txt \
+    --model-dir $OUTPUT_DIR \
+    --output-dir $OUTPUT_DIR \
+    --batch-size 64 \
+    --epochs 10 \
+    --lr 2e-5 \
+    --directau \
+    --directau-gamma 1.0 \
+    --directau-eps 1e-12 \
+    --chunk-size 8192
+```
+
+Evaluating with DirectAU:
+```bash
+python evaluate.py \
+    --task wn18rr \
+    --pretrained-model distilbert-base-uncased \
+    --valid-path data/WN18RR/valid.txt \
+    --train-path data/WN18RR/train.txt \
+    --eval-model-path $OUTPUT_DIR/checkpoint_best.mdl \
+    --output-dir $OUTPUT_DIR \
+    --directau \
+    --chunk-size 8192
+```
+
+### DirectAU Configuration Options
+
+- `--directau`: Enable DirectAU mode (default: False)
+- `--directau-gamma`: Weight for uniformity loss relative to alignment loss (default: 1.0)
+- `--directau-eps`: Epsilon for numerical stability in normalization and log operations (default: 1e-12)
+- `--chunk-size`: Entity chunk size during evaluation to control memory usage (default: 8192)
+
+### Key Differences from SimKGC
+
+| Feature | SimKGC | DirectAU |
+|---------|--------|----------|
+| Query encoding | Pair encoder (head+relation together) | **Same** - pair encoder (head+relation together) |
+| Tail encoding | Separate tail encoder | **Same** - separate tail encoder |
+| Normalization | Implicit in dot-product | Explicit L2-norm after encoding |
+| Loss function | InfoNCE with negative sampling | Alignment + Uniformity (no negative sampling) |
+| Scoring | Dot product (descending) | Dot product (descending, on normalized vectors) |
+
+### Testing DirectAU
+
+Run the test suite to verify the DirectAU integration:
+```bash
+python test_directau.py
+```
+
+This tests initialization, loss computation, query construction, and chunked inference.
+
+### Full Example
+
+See `example_directau.sh` for complete examples including baseline comparison.
+
 ## Citation
 
 If you find our paper or code repository helpful, please consider citing as follows:

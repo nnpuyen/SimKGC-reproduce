@@ -81,7 +81,7 @@ def compute_metrics(hr_tensor: torch.tensor,
                     entities_tensor: torch.tensor,
                     target: List[int],
                     examples: List[Example],
-                    k=3, batch_size=256) -> Tuple:
+                    k=3, batch_size=256, chunk_size=None) -> Tuple:
     assert hr_tensor.size(1) == entities_tensor.size(1)
     total = hr_tensor.size(0)
     entity_cnt = len(entity_dict)
@@ -92,20 +92,32 @@ def compute_metrics(hr_tensor: torch.tensor,
 
     mean_rank, mrr, hit1, hit3, hit10 = 0, 0, 0, 0, 0
 
+    if chunk_size is None:
+        chunk_size = getattr(args, 'chunk_size', 8192)
+
     for start in tqdm.tqdm(range(0, total, batch_size)):
         end = start + batch_size
-        # batch_size * entity_cnt
-        batch_score = torch.mm(hr_tensor[start:end, :], entities_tensor.t())
-        assert entity_cnt == batch_score.size(1)
+        batch_hr = hr_tensor[start:end, :]
         batch_target = target[start:end]
+        batch_examples = examples[start:end]
+        
+        batch_size_actual = batch_hr.size(0)
+        batch_score = torch.zeros(batch_size_actual, entity_cnt, device=hr_tensor.device, dtype=hr_tensor.dtype)
+        
+        for entity_start in range(0, entity_cnt, chunk_size):
+            entity_end = min(entity_start + chunk_size, entity_cnt)
+            chunk_entities = entities_tensor[entity_start:entity_end, :]
+            batch_score[:, entity_start:entity_end] = torch.mm(batch_hr, chunk_entities.t())
+        
+        assert entity_cnt == batch_score.size(1)
 
         # re-ranking based on topological structure
-        rerank_by_graph(batch_score, examples[start:end], entity_dict=entity_dict)
+        rerank_by_graph(batch_score, batch_examples, entity_dict=entity_dict)
 
         # filter known triplets
         for idx in range(batch_score.size(0)):
             mask_indices = []
-            cur_ex = examples[start + idx]
+            cur_ex = batch_examples[idx]
             gold_neighbor_ids = all_triplet_dict.get_neighbors(cur_ex.head_id, cur_ex.relation)
             if len(gold_neighbor_ids) > 10000:
                 logger.debug('{} - {} has {} neighbors'.format(cur_ex.head_id, cur_ex.relation, len(gold_neighbor_ids)))
@@ -186,9 +198,10 @@ def eval_single_direction(predictor: BertPredictor,
     target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     logger.info('predict tensor done, compute metrics...')
 
+    chunk_size = getattr(args, 'chunk_size', 8192)
     topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entity_tensor,
                                                                 target=target, examples=examples,
-                                                                batch_size=batch_size)
+                                                                batch_size=batch_size, chunk_size=chunk_size)
     eval_dir = 'forward' if eval_forward else 'backward'
     logger.info('{} metrics: {}'.format(eval_dir, json.dumps(metrics)))
 

@@ -31,6 +31,14 @@ parser.add_argument('--pooling', default='cls', type=str, metavar='N',
                     help='bert pooling')
 parser.add_argument('--dropout', default=0.1, type=float, metavar='N',
                     help='dropout on final linear layer')
+parser.add_argument('--directau', action='store_true',
+                    help='enable DirectAU-style strict normalization and alignment+uniformity loss')
+parser.add_argument('--directau-gamma', default=1.0, type=float, metavar='N',
+                    help='weight for DirectAU uniformity loss')
+parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
+                    help='epsilon used by DirectAU normalization helpers')
+parser.add_argument('--chunk-size', default=8192, type=int, metavar='N',
+                    help='number of entities processed per chunk during DirectAU inference')
 parser.add_argument('--use-amp', action='store_true',
                     help='Use amp if available')
 parser.add_argument('--t', default=0.05, type=float,
@@ -108,6 +116,9 @@ assert not args.train_path or os.path.exists(args.train_path)
 assert args.pooling in ['cls', 'mean', 'max']
 assert args.task.lower() in ['wn18rr', 'fb15k237', 'wiki5m_ind', 'wiki5m_trans']
 assert args.lr_scheduler in ['linear', 'cosine']
+assert args.directau_gamma > 0
+assert args.directau_eps > 0
+assert args.chunk_size > 0
 
 if not args.model_dir and not args.output_dir:
     assert os.path.exists(args.eval_model_path), 'One of args.model_dir and args.eval_model_path should be valid path'

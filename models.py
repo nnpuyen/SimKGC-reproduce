@@ -1,13 +1,92 @@
 from abc import ABC
 from copy import deepcopy
 
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from dataclasses import dataclass
 from transformers import AutoModel, AutoConfig
 
 from triplet_mask import construct_mask
+
+
+class DirectAULoss(nn.Module):
+    """Alignment and Uniformity loss for DirectAU model."""
+    
+    def __init__(self, gamma: float = 1.0, eps: float = 1e-12):
+        super().__init__()
+        self.gamma = gamma
+        self.eps = eps
+    
+    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
+                labels: torch.tensor = None) -> dict:
+        """
+        Compute DirectAU loss: alignment + uniformity.
+        
+        Args:
+            hr_vector: query vectors (batch_size, dim), normalized
+            tail_vector: tail entity vectors (batch_size, dim), normalized
+            labels: optional labels for batch (batch_size,)
+        
+        Returns:
+            dict with 'loss', 'align_loss', 'uniform_loss'
+        """
+        batch_size = hr_vector.size(0)
+        
+        align_loss = self._compute_align_loss(hr_vector, tail_vector)
+        uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size)
+        
+        total_loss = align_loss + self.gamma * uniform_loss
+        
+        return {
+            'loss': total_loss,
+            'align_loss': align_loss.detach(),
+            'uniform_loss': uniform_loss.detach(),
+        }
+    
+    def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
+        """Alignment loss: mean squared L2 distance between query and tail."""
+        squared_l2_dist = torch.sum((hr_vector - tail_vector) ** 2, dim=-1)
+        align_loss = torch.mean(squared_l2_dist)
+        return align_loss
+    
+    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
+                              batch_size: int) -> torch.tensor:
+        """
+        Uniformity loss: safe log of mean(exp(-2 * pairwise_distances)).
+        Deduplicates batch vectors outside autograd, then computes pairwise loss only on unique embeddings.
+        Gradients flow back through the differentiable index_select operation.
+        """
+        batch_vectors = torch.cat([hr_vector, tail_vector], dim=0)
+
+        if batch_vectors.size(0) < 2:
+            return torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+
+        # Identify unique embeddings outside autograd to keep computation differentiable
+        with torch.no_grad():
+            batch_vectors_np = batch_vectors.detach().cpu().numpy()
+            unique_rows, unique_indices = np.unique(batch_vectors_np, axis=0, return_index=True)
+            unique_indices = torch.from_numpy(unique_indices).to(batch_vectors.device).long()
+        
+        # If very few unique vectors, return zero loss
+        if unique_indices.size(0) < 2:
+            return torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        
+        # Index-select unique vectors (this operation is differentiable)
+        unique_vectors = batch_vectors[unique_indices]
+        
+        # Compute pairwise distances on unique vectors only
+        pairwise_dists = torch.cdist(unique_vectors, unique_vectors, p=2)
+        pairwise_mask = ~torch.eye(unique_vectors.size(0), dtype=torch.bool, device=hr_vector.device)
+        pairwise_dists = pairwise_dists[pairwise_mask]
+
+        exp_term = torch.exp(-2 * pairwise_dists ** 2)
+        mean_exp = torch.mean(exp_term)
+
+        uniform_loss = -torch.log(mean_exp + self.eps)
+        return uniform_loss
 
 
 def build_model(args) -> nn.Module:
@@ -28,6 +107,8 @@ class CustomBertModel(nn.Module, ABC):
         super().__init__()
         self.args = args
         self.config = AutoConfig.from_pretrained(args.pretrained_model)
+        self.directau = bool(getattr(args, 'directau', False))
+        self.directau_eps = float(getattr(args, 'directau_eps', 1e-12))
         self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / args.t).log(), requires_grad=args.finetune_t)
         self.add_margin = args.additive_margin
         self.batch_size = args.batch_size
@@ -78,6 +159,11 @@ class CustomBertModel(nn.Module, ABC):
                                    mask=head_mask,
                                    token_type_ids=head_token_type_ids)
 
+        if self.directau:
+            hr_vector = F.normalize(hr_vector, p=2, dim=-1, eps=self.directau_eps)
+            tail_vector = F.normalize(tail_vector, p=2, dim=-1, eps=self.directau_eps)
+            head_vector = F.normalize(head_vector, p=2, dim=-1, eps=self.directau_eps)
+
         # DataParallel only support tensor/dict
         return {'hr_vector': hr_vector,
                 'tail_vector': tail_vector,
@@ -87,6 +173,14 @@ class CustomBertModel(nn.Module, ABC):
         hr_vector, tail_vector = output_dict['hr_vector'], output_dict['tail_vector']
         batch_size = hr_vector.size(0)
         labels = torch.arange(batch_size).to(hr_vector.device)
+
+        if self.directau:
+            logits = hr_vector.mm(tail_vector.t())
+            return {'logits': logits,
+                'labels': labels,
+                'inv_t': torch.tensor(1.0, device=hr_vector.device),
+                'hr_vector': hr_vector,
+                'tail_vector': tail_vector}
 
         logits = hr_vector.mm(tail_vector.t())
         if self.training:

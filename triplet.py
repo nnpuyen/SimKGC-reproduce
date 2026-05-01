@@ -29,7 +29,7 @@ class TripletDict:
         logger.info('Triplet statistics: {} relations, {} triplets'.format(len(self.relations), self.triplet_cnt))
 
     def _load(self, path: str):
-        examples = json.load(open(path, 'r', encoding='utf-8'))
+        examples = _load_triplet_examples(path)
         examples += [reverse_triplet(obj) for obj in examples]
         for ex in examples:
             self.relations.add(ex['relation'])
@@ -81,7 +81,7 @@ class LinkGraph:
         logger.info('Start to build link graph from {}'.format(train_path))
         # id -> set(id)
         self.graph = {}
-        examples = json.load(open(train_path, 'r', encoding='utf-8'))
+        examples = _load_triplet_examples(train_path)
         for ex in examples:
             head_id, tail_id = ex['head_id'], ex['tail_id']
             if head_id not in self.graph:
@@ -129,3 +129,31 @@ def reverse_triplet(obj):
         'tail_id': obj['head_id'],
         'tail': obj['head']
     }
+
+
+def _load_triplet_examples(path: str):
+    if path.endswith('.json'):
+        return json.load(open(path, 'r', encoding='utf-8'))
+
+    if path.endswith('.txt'):
+        examples = []
+        with open(path, 'r', encoding='utf-8') as reader:
+            for line in reader:
+                line = line.strip()
+                if not line:
+                    continue
+                fields = line.split('\t')
+                if len(fields) < 3:
+                    continue
+                head_id, relation, tail_id = fields[:3]
+                obj = {
+                    'head_id': head_id,
+                    'head': head_id,
+                    'relation': relation,
+                    'tail_id': tail_id,
+                    'tail': tail_id,
+                }
+                examples.append(obj)
+        return examples
+
+    raise ValueError('Unsupported triplet file format: {}'.format(path))

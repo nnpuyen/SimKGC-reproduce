@@ -19,7 +19,7 @@ from doc import Dataset, collate
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj
 from metric import accuracy
-from models import build_model, ModelOutput
+from models import build_model, ModelOutput, DirectAULoss
 from dict_hub import build_tokenizer
 from logger_config import logger
 import os 
@@ -39,7 +39,15 @@ class Trainer:
         self._setup_training()
 
         # define loss function (criterion) and optimizer
-        self.criterion = nn.CrossEntropyLoss().cuda()
+        if getattr(self.args, 'directau', False):
+            self.criterion = DirectAULoss(
+                gamma=getattr(self.args, 'directau_gamma', 1.0),
+                eps=getattr(self.args, 'directau_eps', 1e-12)
+            ).cuda()
+            self.directau_mode = True
+        else:
+            self.criterion = nn.CrossEntropyLoss().cuda()
+            self.directau_mode = False
 
         self.optimizer = AdamW([p for p in self.model.parameters() if p.requires_grad],
                                lr=args.lr,
@@ -230,7 +238,15 @@ class Trainer:
             outputs = get_model_obj(self.model).compute_logits(output_dict=outputs, batch_dict=batch_dict)
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
-            loss = self.criterion(logits, labels)
+            
+            if self.directau_mode:
+                hr_vector = outputs.hr_vector
+                tail_vector = outputs.tail_vector
+                loss_dict = self.criterion(hr_vector, tail_vector, labels)
+                loss = loss_dict['loss']
+            else:
+                loss = self.criterion(logits, labels)
+            
             losses.update(loss.item(), batch_size)
 
             acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
@@ -271,10 +287,17 @@ class Trainer:
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
             assert logits.size(0) == batch_size
-            # head + relation -> tail
-            loss = self.criterion(logits, labels)
-            # tail -> head + relation
-            loss += self.criterion(logits[:, :batch_size].t(), labels)
+            
+            if self.directau_mode:
+                hr_vector = outputs.hr_vector
+                tail_vector = outputs.tail_vector
+                loss_dict = self.criterion(hr_vector, tail_vector, labels)
+                loss = loss_dict['loss']
+            else:
+                # head + relation -> tail
+                loss = self.criterion(logits, labels)
+                # tail -> head + relation
+                loss += self.criterion(logits[:, :batch_size].t(), labels)
 
             acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
             top1.update(acc1.item(), batch_size)
@@ -398,7 +421,8 @@ class Trainer:
             hr_tensor = hr_tensor.cuda()
             entities_tensor = entities_tensor.cuda()
         target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
-        topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entities_tensor, target=target, examples=examples, batch_size=batch_size)
+        chunk_size = getattr(self.args, 'chunk_size', 8192)
+        topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entities_tensor, target=target, examples=examples, batch_size=batch_size, chunk_size=chunk_size)
         log_str = f"[{eval_set}] Link Prediction Metrics: {json.dumps(metrics)}"
         print(log_str)
         with open(output_log_path, 'a', encoding='utf-8') as f:
