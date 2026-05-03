@@ -242,7 +242,8 @@ class Trainer:
             if self.directau_mode:
                 hr_vector = outputs.hr_vector
                 tail_vector = outputs.tail_vector
-                loss_dict = self.criterion(hr_vector, tail_vector, labels)
+                batch_exs = batch_dict.get('batch_data', None)
+                loss_dict = self.criterion(hr_vector, tail_vector, labels, batch_exs=batch_exs)
                 loss = loss_dict['loss']
             else:
                 loss = self.criterion(logits, labels)
@@ -291,7 +292,9 @@ class Trainer:
             if self.directau_mode:
                 hr_vector = outputs.hr_vector
                 tail_vector = outputs.tail_vector
-                loss_dict = self.criterion(hr_vector, tail_vector, labels)
+                batch_exs = batch_dict.get('batch_data', None)
+                loss_dict = self.criterion(hr_vector, tail_vector, labels, batch_exs=batch_exs)
+                print(f"DirectAU Loss components: {json.dumps({k: round(v.item(), 6) for k, v in loss_dict.items() if k != 'loss'})}")
                 loss = loss_dict['loss']
             else:
                 # head + relation -> tail

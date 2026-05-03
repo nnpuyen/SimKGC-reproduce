@@ -11,7 +11,6 @@ from transformers import AutoModel, AutoConfig
 
 from triplet_mask import construct_mask
 
-
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
@@ -21,7 +20,7 @@ class DirectAULoss(nn.Module):
         self.eps = eps
     
     def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
-                labels: torch.tensor = None) -> dict:
+                labels: torch.tensor = None, batch_exs: list = None) -> dict:
         """
         Compute DirectAU loss: alignment + uniformity.
         
@@ -36,7 +35,7 @@ class DirectAULoss(nn.Module):
         batch_size = hr_vector.size(0)
         
         align_loss = self._compute_align_loss(hr_vector, tail_vector)
-        uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size)
+        uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size, batch_exs=batch_exs)
         
         total_loss = align_loss + self.gamma * uniform_loss
         
@@ -52,41 +51,77 @@ class DirectAULoss(nn.Module):
         align_loss = torch.mean(squared_l2_dist)
         return align_loss
     
-    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
-                              batch_size: int) -> torch.tensor:
+    def _compute_uniform_loss_for_vectors(self, vectors: torch.tensor) -> torch.tensor:
         """
-        Uniformity loss: safe log of mean(exp(-2 * pairwise_distances)).
-        Deduplicates batch vectors outside autograd, then computes pairwise loss only on unique embeddings.
+        Uniformity loss for a single set of vectors: safe log of mean(exp(-2 * pairwise_distances)).
+        Deduplicates vectors outside autograd, then computes pairwise loss only on unique embeddings.
         Gradients flow back through the differentiable index_select operation.
         """
-        batch_vectors = torch.cat([hr_vector, tail_vector], dim=0)
-
-        if batch_vectors.size(0) < 2:
-            return torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        if vectors.size(0) < 2:
+            return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
 
         # Identify unique embeddings outside autograd to keep computation differentiable
         with torch.no_grad():
-            batch_vectors_np = batch_vectors.detach().cpu().numpy()
-            unique_rows, unique_indices = np.unique(batch_vectors_np, axis=0, return_index=True)
-            unique_indices = torch.from_numpy(unique_indices).to(batch_vectors.device).long()
+            vectors_np = vectors.detach().cpu().numpy()
+            unique_rows, unique_indices = np.unique(vectors_np, axis=0, return_index=True)
+            unique_indices = torch.from_numpy(unique_indices).to(vectors.device).long()
         
         # If very few unique vectors, return zero loss
         if unique_indices.size(0) < 2:
-            return torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+            return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
         
         # Index-select unique vectors (this operation is differentiable)
-        unique_vectors = batch_vectors[unique_indices]
+        unique_vectors = vectors[unique_indices]
         
         # Compute pairwise distances on unique vectors only
         pairwise_dists = torch.cdist(unique_vectors, unique_vectors, p=2)
-        pairwise_mask = ~torch.eye(unique_vectors.size(0), dtype=torch.bool, device=hr_vector.device)
+        pairwise_mask = ~torch.eye(unique_vectors.size(0), dtype=torch.bool, device=vectors.device)
         pairwise_dists = pairwise_dists[pairwise_mask]
 
         exp_term = torch.exp(-2 * pairwise_dists ** 2)
         mean_exp = torch.mean(exp_term)
 
-        uniform_loss = -torch.log(mean_exp + self.eps)
+        uniform_loss = torch.log(mean_exp + self.eps)
         return uniform_loss
+
+    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
+                              batch_size: int, batch_exs: list = None) -> torch.tensor:
+        """
+        Uniformity loss: compute separately for hr_vector and tail_vector, then sum.
+        If `batch_exs` is provided, deduplicate vectors by entity id (head_id for hr_vector,
+        tail_id for tail_vector) before computing uniformity so that multiple occurrences of the
+        same entity in a batch are treated as one.
+        """
+        # Deduplicate by entity ids when available to avoid "shattering" caused by dropout
+        if batch_exs is not None:
+            # Extract ids for hr and tail in same order as vectors
+            head_ids = [ex.head_id for ex in batch_exs]
+            tail_ids = [ex.tail_id for ex in batch_exs]
+
+            def unique_indices_by_id(ids):
+                seen = set()
+                uniq_idx = []
+                for i, idv in enumerate(ids):
+                    if idv not in seen:
+                        seen.add(idv)
+                        uniq_idx.append(i)
+                return torch.tensor(uniq_idx, dtype=torch.long, device=hr_vector.device)
+
+            # Select unique vectors according to ids
+            hr_idx = unique_indices_by_id(head_ids)
+            tail_idx = unique_indices_by_id(tail_ids)
+
+            hr_unique = hr_vector[hr_idx]
+            tail_unique = tail_vector[tail_idx]
+
+            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_unique)
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique)
+        else:
+            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_vector)
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector)
+
+        total_uniform_loss = hr_uniform_loss + tail_uniform_loss
+        return total_uniform_loss
 
 
 def build_model(args) -> nn.Module:
@@ -191,21 +226,21 @@ class CustomBertModel(nn.Module, ABC):
         if triplet_mask is not None:
             logits.masked_fill_(~triplet_mask, -1e4)
 
-        if self.pre_batch > 0 and self.training:
-            pre_batch_logits = self._compute_pre_batch_logits(hr_vector, tail_vector, batch_dict)
-            logits = torch.cat([logits, pre_batch_logits], dim=-1)
+        # if self.pre_batch > 0 and self.training:
+        #     pre_batch_logits = self._compute_pre_batch_logits(hr_vector, tail_vector, batch_dict)
+        #     logits = torch.cat([logits, pre_batch_logits], dim=-1)
 
-        if self.args.use_self_negative and self.training:
-            head_vector = output_dict['head_vector']
-            self_neg_logits = torch.sum(hr_vector * head_vector, dim=1) * self.log_inv_t.exp()
-            self_negative_mask = batch_dict.get('self_negative_mask', None)
-            if self_negative_mask is None:
-                # Keep behavior stable when mask is unavailable (e.g., misconfigured test mode during training).
-                self_negative_mask = torch.ones(batch_size, dtype=torch.bool, device=hr_vector.device)
-            else:
-                self_negative_mask = self_negative_mask.to(hr_vector.device).bool()
-            self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
-            logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
+        # if self.args.use_self_negative and self.training:
+        #     head_vector = output_dict['head_vector']
+        #     self_neg_logits = torch.sum(hr_vector * head_vector, dim=1) * self.log_inv_t.exp()
+        #     self_negative_mask = batch_dict.get('self_negative_mask', None)
+        #     if self_negative_mask is None:
+        #         # Keep behavior stable when mask is unavailable (e.g., misconfigured test mode during training).
+        #         self_negative_mask = torch.ones(batch_size, dtype=torch.bool, device=hr_vector.device)
+        #     else:
+        #         self_negative_mask = self_negative_mask.to(hr_vector.device).bool()
+        #     self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
+        #     logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
 
         return {'logits': logits,
                 'labels': labels,
