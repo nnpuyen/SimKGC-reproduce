@@ -10,7 +10,7 @@ from collections import OrderedDict
 from doc import collate, Example, Dataset
 from config import args
 from models import build_model
-from utils import AttrDict, move_to_cuda
+from utils import AttrDict, move_to_cuda, call_model_forward
 from dict_hub import build_tokenizer
 from logger_config import logger
 
@@ -60,6 +60,9 @@ class BertPredictor:
 
     @torch.no_grad()
     def predict_by_examples(self, examples: List[Example]):
+        if not examples:
+            raise ValueError('predict_by_examples received no examples; check the evaluation split format and filters.')
+
         data_loader = torch.utils.data.DataLoader(
             Dataset(path='', examples=examples, task=args.task),
             num_workers=1,
@@ -71,7 +74,7 @@ class BertPredictor:
         for idx, batch_dict in enumerate(data_loader):
             if self.use_cuda:
                 batch_dict = move_to_cuda(batch_dict)
-            outputs = self.model(**batch_dict)
+            outputs = call_model_forward(self.model, batch_dict)
             hr_tensor_list.append(outputs['hr_vector'])
             tail_tensor_list.append(outputs['tail_vector'])
 
@@ -95,7 +98,7 @@ class BertPredictor:
             batch_dict['only_ent_embedding'] = True
             if self.use_cuda:
                 batch_dict = move_to_cuda(batch_dict)
-            outputs = self.model(**batch_dict)
+            outputs = call_model_forward(self.model, batch_dict)
             ent_tensor_list.append(outputs['ent_vectors'])
 
         return torch.cat(ent_tensor_list, dim=0)

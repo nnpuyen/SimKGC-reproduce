@@ -14,6 +14,7 @@ from dict_hub import get_entity_dict, get_all_triplet_dict
 from triplet import EntityDict
 from rerank import rerank_by_graph
 from metric_classification import classification_metrics, find_global_threshold
+from utils import get_model_obj, call_model_forward
 from logger_config import logger
 
 
@@ -253,8 +254,8 @@ def evaluate_triple_classification(predictor: BertPredictor, label_path: str, ou
                 if isinstance(batch_dict[key], torch.Tensor):
                     batch_dict[key] = batch_dict[key].cuda()
             predictor.model.cuda()
-        output_dict = predictor.model(**batch_dict)
-        logits = predictor.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+        output_dict = call_model_forward(predictor.model, batch_dict)
+        logits = get_model_obj(predictor.model).compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
         prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
         y_prob.extend(prob.tolist())
 

@@ -141,11 +141,13 @@ def load_data(path: str,
               add_forward_triplet: bool = True,
               add_backward_triplet: bool = True) -> List[Example]:
     # Hỗ trợ đọc file .json (link prediction) và .txt (triple classification)
-    assert add_forward_triplet or add_backward_triplet
+    is_classification_mode = (not add_forward_triplet and not add_backward_triplet)
     logger.info('In test mode: {}'.format(args.is_test))
 
     examples = []
     if path.endswith('.json'):
+        if is_classification_mode:
+            raise ValueError('Classification mode expects labeled .txt input, got: {}'.format(path))
         data = json.load(open(path, 'r', encoding='utf-8'))
         logger.info('Load {} examples from {}'.format(len(data), path))
         cnt = len(data)
@@ -161,7 +163,20 @@ def load_data(path: str,
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 fs = line.strip().split('\t')
-                if len(fs) == 4:
+                if len(fs) == 3:
+                    head_id, relation, tail_id = fs
+                    # Standard link-prediction split without labels.
+                    if add_forward_triplet:
+                        examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id))
+                    if add_backward_triplet:
+                        examples.append(Example(**reverse_triplet({
+                            'head_id': head_id,
+                            'relation': relation,
+                            'tail_id': tail_id,
+                            'head': head_id,
+                            'tail': tail_id,
+                        })))
+                elif len(fs) == 4:
                     head_id, relation, tail_id, label = fs
                     # Nếu dùng cho link prediction, chỉ lấy label=1
                     if (add_forward_triplet or add_backward_triplet) and str(label) == '1':

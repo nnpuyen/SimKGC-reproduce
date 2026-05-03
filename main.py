@@ -29,6 +29,7 @@ def evaluate_test_triple_classification(args, epoch=None):
     from doc import load_data
     from predict import BertPredictor
     from metric_classification import classification_metrics, find_global_threshold
+    from utils import get_model_obj, call_model_forward
 
     test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
     valid_label_path = getattr(args, 'valid_label_path', '')
@@ -59,8 +60,8 @@ def evaluate_test_triple_classification(args, epoch=None):
                 if isinstance(batch_dict[k], torch.Tensor):
                     batch_dict[k] = batch_dict[k].cuda()
             predictor.model.cuda()
-        output_dict = predictor.model(**batch_dict)
-        logits = predictor.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+        output_dict = call_model_forward(predictor.model, batch_dict)
+        logits = get_model_obj(predictor.model).compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
         prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
         y_prob.extend(prob.tolist())
     # Dùng threshold tìm được trên validation

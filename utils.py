@@ -63,6 +63,33 @@ def move_to_cuda(sample):
     return _move_to_cuda(sample)
 
 
+def call_model_forward(model, batch_dict):
+    """
+    Properly calls model.forward() with batch_dict, handling DataParallel compatibility.
+    Extracts required positional arguments explicitly to avoid issues with DataParallel kwargs unpacking.
+    
+    Args:
+        model: The model instance (may be wrapped with DataParallel)
+        batch_dict: Dictionary containing batch data with keys: hr_token_ids, hr_mask, hr_token_type_ids,
+                   tail_token_ids, tail_mask, tail_token_type_ids, head_token_ids, head_mask, head_token_type_ids
+    
+    Returns:
+        Model output dictionary
+    """
+    return model(
+        hr_token_ids=batch_dict['hr_token_ids'],
+        hr_mask=batch_dict['hr_mask'],
+        hr_token_type_ids=batch_dict['hr_token_type_ids'],
+        tail_token_ids=batch_dict['tail_token_ids'],
+        tail_mask=batch_dict['tail_mask'],
+        tail_token_type_ids=batch_dict['tail_token_type_ids'],
+        head_token_ids=batch_dict['head_token_ids'],
+        head_mask=batch_dict['head_mask'],
+        head_token_type_ids=batch_dict['head_token_type_ids'],
+        only_ent_embedding=batch_dict.get('only_ent_embedding', False)
+    )
+
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self, name, fmt=':f'):

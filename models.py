@@ -53,29 +53,14 @@ class DirectAULoss(nn.Module):
     
     def _compute_uniform_loss_for_vectors(self, vectors: torch.tensor) -> torch.tensor:
         """
-        Uniformity loss for a single set of vectors: safe log of mean(exp(-2 * pairwise_distances)).
-        Deduplicates vectors outside autograd, then computes pairwise loss only on unique embeddings.
-        Gradients flow back through the differentiable index_select operation.
+        Uniformity loss for a single set of vectors: log of mean(exp(-2 * pairwise_distances)).
+        Assumes the input vectors have already been deduplicated or pooled upstream.
         """
         if vectors.size(0) < 2:
             return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
 
-        # Identify unique embeddings outside autograd to keep computation differentiable
-        with torch.no_grad():
-            vectors_np = vectors.detach().cpu().numpy()
-            unique_rows, unique_indices = np.unique(vectors_np, axis=0, return_index=True)
-            unique_indices = torch.from_numpy(unique_indices).to(vectors.device).long()
-        
-        # If very few unique vectors, return zero loss
-        if unique_indices.size(0) < 2:
-            return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
-        
-        # Index-select unique vectors (this operation is differentiable)
-        unique_vectors = vectors[unique_indices]
-        
-        # Compute pairwise distances on unique vectors only
-        pairwise_dists = torch.cdist(unique_vectors, unique_vectors, p=2)
-        pairwise_mask = ~torch.eye(unique_vectors.size(0), dtype=torch.bool, device=vectors.device)
+        pairwise_dists = torch.cdist(vectors, vectors, p=2)
+        pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
         pairwise_dists = pairwise_dists[pairwise_mask]
 
         exp_term = torch.exp(-2 * pairwise_dists ** 2)
