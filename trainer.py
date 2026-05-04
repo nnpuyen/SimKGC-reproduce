@@ -2,7 +2,6 @@ from metric_classification import classification_metrics, find_global_threshold
 import numpy as np
 import time
 from evaluate import eval_single_direction, compute_metrics
-from predict import BertPredictor
 import glob
 import json
 import torch
@@ -90,25 +89,71 @@ class Trainer:
             self._run_eval(epoch=epoch)
             val_time = time.time() - val_start
 
-            # Evaluate MR, MRR, Hits@1/3/10 on valid set using evaluate.py logic
+            # Evaluate MR, MRR, Hits@1/3/10 on valid set using current training model (no second model loaded)
             if self.args.valid_path and self.args.model_dir:
-                ckt_path = '{}/checkpoint_epoch{}.mdl'.format(self.args.model_dir, epoch)
-                if not os.path.exists(ckt_path):
-                    ckt_path = '{}/checkpoint_{}_0.mdl'.format(self.args.model_dir, epoch)
-                if os.path.exists(ckt_path):
-                    predictor = BertPredictor()
-                    predictor.load(ckt_path)
-                    from dict_hub import get_entity_dict
-                    entity_dict = get_entity_dict()
-                    entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs)
-                    forward_metrics = eval_single_direction(predictor, entity_tensor, eval_forward=True)
-                    backward_metrics = eval_single_direction(predictor, entity_tensor, eval_forward=False)
-                    metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
-                    log_str = f"[EPOCH {epoch}]\nForward: {json.dumps(forward_metrics)}\nBackward: {json.dumps(backward_metrics)}\nAverage: {json.dumps(metrics)}"
-                    print(log_str)
-                    logger.info(log_str)
-                    with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
-                        f.write(log_str + '\n')
+                from dict_hub import get_entity_dict
+                from doc import Example
+                entity_dict = get_entity_dict()
+                
+                # Use training model directly for entity embeddings
+                self.model.eval()
+                with torch.no_grad():
+                    examples = []
+                    for entity_ex in entity_dict.entity_exs:
+                        examples.append(Example(head_id='', relation='',
+                                                tail_id=entity_ex.entity_id))
+                    entity_loader = torch.utils.data.DataLoader(
+                        Dataset(path='', examples=examples, task=self.args.task),
+                        num_workers=0,
+                        batch_size=max(self.args.batch_size, 512),
+                        collate_fn=collate,
+                        shuffle=False)
+                    
+                    ent_tensor_list = []
+                    for batch_dict in entity_loader:
+                        batch_dict['only_ent_embedding'] = True
+                        if torch.cuda.is_available():
+                            batch_dict = move_to_cuda(batch_dict)
+                        outputs = get_model_obj(self.model)(**batch_dict)
+                        ent_tensor_list.append(outputs['ent_vectors'])
+                    entity_tensor = torch.cat(ent_tensor_list, dim=0)
+                self.model.train()
+                
+                # Create a lightweight wrapper for eval_single_direction compatibility
+                class ModelWrapper:
+                    def __init__(self, model, task, batch_size):
+                        self.model = model
+                        self.task = task
+                        self.batch_size = batch_size
+                    
+                    def predict_by_examples(self, examples):
+                        self.model.eval()
+                        with torch.no_grad():
+                            data_loader = torch.utils.data.DataLoader(
+                                Dataset(path='', examples=examples, task=self.task),
+                                num_workers=0,
+                                batch_size=max(self.batch_size, 512),
+                                collate_fn=collate,
+                                shuffle=False)
+                            hr_tensor_list, tail_tensor_list = [], []
+                            for batch_dict in data_loader:
+                                if torch.cuda.is_available():
+                                    batch_dict = move_to_cuda(batch_dict)
+                                outputs = get_model_obj(self.model)(**batch_dict)
+                                hr_tensor_list.append(outputs['hr_vector'])
+                                tail_tensor_list.append(outputs['tail_vector'])
+                        self.model.train()
+                        return torch.cat(hr_tensor_list, dim=0), torch.cat(tail_tensor_list, dim=0)
+                
+                predictor = ModelWrapper(get_model_obj(self.model), self.args.task, self.args.batch_size)
+                forward_metrics = eval_single_direction(predictor, entity_tensor, eval_forward=True)
+                backward_metrics = eval_single_direction(predictor, entity_tensor, eval_forward=False)
+                metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
+                log_str = f"[EPOCH {epoch}]\nForward: {json.dumps(forward_metrics)}\nBackward: {json.dumps(backward_metrics)}\nAverage: {json.dumps(metrics)}"
+                print(log_str)
+                logger.info(log_str)
+                with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
+                    f.write(log_str + '\n')
 
             # Evaluate triple classification metrics on a separate labeled validation file.
             valid_label_path = self.args.valid_label_path or None
@@ -122,22 +167,24 @@ class Trainer:
                 from doc import load_data
                 valid_exs = load_data(valid_label_path, add_forward_triplet=False, add_backward_triplet=False)
                 y_true = [ex.label for ex in valid_exs]
-                # Dự đoán xác suất (logit) và nhãn
+                # Dự đoán xác suất (logit) và nhãn - use existing training model, no second model
                 y_prob = []
                 batch_size = 128
-                for i in range(0, len(valid_exs), batch_size):
-                    batch = valid_exs[i:i+batch_size]
-                    batch_vec = [ex.vectorize() for ex in batch]
-                    batch_dict = collate(batch_vec)
-                    if torch.cuda.is_available():
-                        for k in batch_dict:
-                            if isinstance(batch_dict[k], torch.Tensor):
-                                batch_dict[k] = batch_dict[k].cuda()
-                        predictor.model.cuda()
-                    output_dict = predictor.model(**batch_dict)
-                    logits = predictor.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
-                    prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
-                    y_prob.extend(prob.tolist())
+                self.model.eval()
+                with torch.no_grad():
+                    for i in range(0, len(valid_exs), batch_size):
+                        batch = valid_exs[i:i+batch_size]
+                        batch_vec = [ex.vectorize() for ex in batch]
+                        batch_dict = collate(batch_vec)
+                        if torch.cuda.is_available():
+                            for k in batch_dict:
+                                if isinstance(batch_dict[k], torch.Tensor):
+                                    batch_dict[k] = batch_dict[k].cuda()
+                        output_dict = get_model_obj(self.model)(**batch_dict)
+                        logits = get_model_obj(self.model).compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                        prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+                        y_prob.extend(prob.tolist())
+                self.model.train()
                 # Tìm threshold tối ưu trên validation
                 threshold = find_global_threshold(y_true, y_prob)
                 y_pred = (np.array(y_prob) > threshold).astype(int).tolist()

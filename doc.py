@@ -141,7 +141,6 @@ def load_data(path: str,
               add_forward_triplet: bool = True,
               add_backward_triplet: bool = True) -> List[Example]:
     # Hỗ trợ đọc file .json (link prediction) và .txt (triple classification)
-    assert add_forward_triplet or add_backward_triplet
     logger.info('In test mode: {}'.format(args.is_test))
 
     examples = []
