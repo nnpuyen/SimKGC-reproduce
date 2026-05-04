@@ -32,6 +32,6 @@ python3 -u main.py \
 --use-self-negative \
 --pre-batch 0 \
 --finetune-t \
---epochs 10 \
+--epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"
