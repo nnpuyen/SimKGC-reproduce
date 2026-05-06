@@ -501,7 +501,7 @@ CLASS DirectAULoss(Module):
         Args:
             q_batch: [batch_size, 768], L2-normalized query embeddings
             t_batch: [batch_size, 768], L2-normalized tail embeddings
-            batch_exs: List[Example] with head_id, tail_id for uniqueness
+            batch_exs: List[Example] with head_id, relation, tail_id for uniqueness
         
         Returns:
             loss: scalar
@@ -513,8 +513,8 @@ CLASS DirectAULoss(Module):
         loss_align = torch.mean(squared_l2_dist)
         
         // UNIQUENESS EXTRACTION
-        head_ids = [ex.head_id for ex in batch_exs]
-        q_unique_idx = get_unique_indices(head_ids)
+        query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
+        q_unique_idx = get_unique_indices(query_keys)
         q_unique = q_batch[q_unique_idx]
         
         tail_ids = [ex.tail_id for ex in batch_exs]
@@ -728,9 +728,9 @@ FUNCTION directau_loss_forward(q_batch, t_batch, batch_exs,
     
     // UNIFORMITY LOSS FOR QUERIES
     IF batch_exs IS NOT None:
-        head_ids = [ex.head_id for ex in batch_exs]
+        query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
         unique_head_idx = torch.tensor(
-            unique_indices_by_id(head_ids), device=q_batch.device
+            unique_indices_by_id(query_keys), device=q_batch.device
         )
         q_unique = q_batch[unique_head_idx]
     ELSE:
@@ -1122,6 +1122,21 @@ END FUNCTION
 | **Negatives** | Only in-batch | In-batch + Pre-batch + Self |
 | **Masking** | None | Triplet mask |
 | **Unique Dedup** | Yes (for uniformity) | Optional |
+
+---
+
+## Eight Strategy Modes
+
+| # | Strategy | Pseudocode hook |
+|---|---|---|
+| 1 | Neighbor-based context augmentation | `use_link_graph` branch in text preparation |
+| 2 | Triplet masking | `construct_mask(...)` during SimKGC-style training |
+| 3 | Learning-rate scheduling | `lr_scheduler.step()` in the epoch loop |
+| 4 | Gradient accumulation | Scale loss, delay `optimizer.step()` |
+| 5 | Pre-batch negatives | `pre_batch_buffer` and `pre_batch_logits` |
+| 6 | Mixed precision | `torch.autocast(...)` and `GradScaler` |
+| 7 | Weight decay | `AdamW(..., weight_decay=...)` |
+| 8 | Fine-tunable temperature | `log_inv_t` when `finetune_t` is enabled |
 
 ---
 

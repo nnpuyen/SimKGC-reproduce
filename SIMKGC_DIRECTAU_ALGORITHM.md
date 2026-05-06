@@ -17,6 +17,23 @@
 
 The integration maintains SimKGC's **text-based encoder architecture** while replacing the contrastive loss with **DirectAU's alignment + uniformity approach** for more interpretable and theoretically motivated training.
 
+### Eight Strategy Modes
+
+In addition to the core loss-mode split, the implementation and documentation expose eight strategy switches that control data context, optimization, and memory behavior:
+
+| # | Strategy | Primary use |
+|---|---|---|
+| 1 | Neighbor-based context augmentation | Enrich entity text with 1-hop graph neighbors |
+| 2 | Triplet masking | Prevent in-batch leakage from known positives |
+| 3 | Learning-rate scheduling | Apply linear or cosine warmup/decay |
+| 4 | Gradient accumulation | Increase effective batch size under memory limits |
+| 5 | Pre-batch negatives | Reuse cached vectors for InfoNCE-style training |
+| 6 | Mixed precision | Reduce activation memory and improve throughput |
+| 7 | Weight decay | Regularize model weights during optimization |
+| 8 | Fine-tunable temperature | Make SimKGC temperature learnable when needed |
+
+DirectAU primarily uses strategies 1, 2, 3, 4, 6, and 7; strategies 5 and 8 are SimKGC-oriented compatibility controls.
+
 ---
 
 ## Architecture
@@ -108,9 +125,9 @@ def uniformity_loss(vectors, eps=1e-12):
 **Two Uniformity Terms** (Computed Separately):
 
 1. **Query Uniformity** ($L_{\text{uni}}^q$):
-   - Extract unique query embeddings by head_id
+    - Extract unique query embeddings by the composite key (head_id, relation)
    - Compute uniformity loss for unique queries
-   - Prevents multiple (h, r) pairs with same h from clustering
+    - Prevents repeated (h, r) pairs from clustering
 
 2. **Entity Uniformity** ($L_{\text{uni}}^t$):
    - Extract unique tail embeddings by tail_id
@@ -187,9 +204,9 @@ for epoch in range(n_epochs):
         loss_align = torch.mean(squared_l2_dist)        # scalar
         
         # STEP 6: Extract unique embeddings for Uniformity Loss
-        # Deduplicate queries by head_id
-        head_ids = [ex.head_id for ex in batch_exs]
-        q_unique_idx = get_unique_indices(head_ids)
+        # Deduplicate queries by (head_id, relation)
+        query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
+        q_unique_idx = get_unique_indices(query_keys)
         q_unique = q_batch[q_unique_idx]
         
         # Deduplicate tails by tail_id
@@ -259,7 +276,7 @@ def L2_normalize(vectors, eps=1e-12):
 def get_unique_indices(ids):
     """
     Find first occurrence index of each unique ID.
-    ids: List of integers
+    ids: List of hashable keys, such as integers or (head_id, relation) tuples
     Returns: List of indices corresponding to first occurrence
     """
     seen = {}
@@ -877,6 +894,32 @@ LR ↑
 
 ---
 
+### 4. Gradient Accumulation
+
+**Purpose**: Simulate a larger batch size when GPU memory cannot hold the full batch.
+
+**Configuration**:
+```bash
+--grad-accum-steps 4      # Number of micro-batches to accumulate before optimizer.step()
+```
+
+**Implementation**:
+```python
+loss = loss / accumulation_steps
+loss.backward()
+
+if (batch_idx + 1) % accumulation_steps == 0:
+    optimizer.step()
+    optimizer.zero_grad()
+```
+
+**Benefits**:
+- Improves gradient stability with large effective batches
+- Keeps peak memory lower than a true large batch
+- Works with both DirectAU and SimKGC training loops
+
+---
+
 ### 5. Pre-batch Negatives: Historical Embedding Buffer
 
 **Purpose**: Increase negative diversity without additional forward passes by maintaining a circular buffer of past embeddings.
@@ -1017,13 +1060,14 @@ python main.py --task wn18rr --directau --use-link-graph \
 5. ✅ **Explicit normalization**: All embeddings on unit hypersphere
 6. ✅ **Scalable inference**: Chunked processing for large entity sets
 7. ✅ **Supports both tasks**: Link prediction + triple classification
-8. ✅ **Advanced techniques**: Neighbor augmentation, triplet masking, LR scheduling, AMP
+8. ✅ **Eight strategy switches**: Neighbor augmentation, triplet masking, LR scheduling, gradient accumulation, pre-batch negatives, AMP, weight decay, temperature tuning
 
 ### Advanced Techniques Available
 
 - **Neighbor Context** (`--use-link-graph`): Enrich entity text with 1-hop neighbors
 - **Triplet Masking**: Prevent training leakage in negative sampling
 - **Learning Rate Scheduling**: Linear or cosine warmup with decay
+- **Gradient Accumulation** (`--grad-accum-steps`): Simulate larger effective batches under tight memory budgets
 - **Pre-batch Negatives** (`--pre-batch`): Historical embedding buffer for negatives
 - **Mixed Precision** (`--use-amp`): FP16 forward, FP32 backward
 - **Weight Decay** (`--wd`): L2 regularization

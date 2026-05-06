@@ -76,14 +76,14 @@ class DirectAULoss(nn.Module):
                               batch_size: int, batch_exs: list = None) -> torch.tensor:
         """
         Uniformity loss: compute separately for hr_vector and tail_vector, then sum.
-        If `batch_exs` is provided, deduplicate vectors by entity id (head_id for hr_vector,
-        tail_id for tail_vector) before computing uniformity so that multiple occurrences of the
-        same entity in a batch are treated as one.
+        If `batch_exs` is provided, deduplicate query vectors by the composite key
+        (head_id, relation) and tail vectors by tail_id before computing uniformity so that
+        repeated query or entity occurrences in a batch are treated as one.
         """
         # Deduplicate by entity ids when available to avoid "shattering" caused by dropout
         if batch_exs is not None:
-            # Extract ids for hr and tail in same order as vectors
-            head_ids = [ex.head_id for ex in batch_exs]
+            # Extract composite query keys and tail ids in the same order as vectors
+            query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
             tail_ids = [ex.tail_id for ex in batch_exs]
 
             def unique_indices_by_id(ids):
@@ -96,7 +96,7 @@ class DirectAULoss(nn.Module):
                 return torch.tensor(uniq_idx, dtype=torch.long, device=hr_vector.device)
 
             # Select unique vectors according to ids
-            hr_idx = unique_indices_by_id(head_ids)
+            hr_idx = unique_indices_by_id(query_keys)
             tail_idx = unique_indices_by_id(tail_ids)
 
             hr_unique = hr_vector[hr_idx]

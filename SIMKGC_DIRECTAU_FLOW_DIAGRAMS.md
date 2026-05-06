@@ -34,8 +34,8 @@ Knowledge Graph Data
     │  │ 1. Alignment Loss                ││
     │  │    L_align = mean(||q - t||²)    ││
     │  ├──────────────────────────────────┤│
-    │  │ 2. Unique Query Embeddings       ││
-    │  │    Deduplicate by head_id        ││
+     │  │ 2. Unique Query Embeddings       ││
+     │  │    Deduplicate by (head_id, relation) ││
     │  ├──────────────────────────────────┤│
     │  │ 3. Unique Tail Embeddings        ││
     │  │    Deduplicate by tail_id        ││
@@ -88,8 +88,8 @@ Knowledge Graph Data
     │   └─ loss_align = mean(squared_dist)
     │
     ├─→ STEP 5: Extract Unique Embeddings
-    │   ├─ head_ids = [ex.head_id for ex in batch]
-    │   ├─ q_unique_idx = find_unique(head_ids)
+     │   ├─ query_keys = [(ex.head_id, ex.relation) for ex in batch]
+     │   ├─ q_unique_idx = find_unique(query_keys)
     │   ├─ q_unique = q_batch[q_unique_idx]
     │   │
     │   ├─ tail_ids = [ex.tail_id for ex in batch]
@@ -180,10 +180,10 @@ INPUT:
 ┌─ BRANCH 2: UNIQUENESS EXTRACTION ──────────────────────────┐
 │                                                             │
 │  # Extract unique query indices                            │
-│  head_ids = [ex.head_id for ex in batch_exs]              │
-│  → List[int] of length batch_size                          │
+│  query_keys = [(ex.head_id, ex.relation) for ex in batch_exs] │
+│  → List[Tuple[str, str]] of length batch_size             │
 │                                                             │
-│  q_unique_idx = get_first_unique_indices(head_ids)        │
+│  q_unique_idx = get_first_unique_indices(query_keys)      │
 │  → List[int], length ≤ batch_size                          │
 │                                                             │
 │  q_unique = q_batch[q_unique_idx]                          │
@@ -493,8 +493,9 @@ Output: scalar (e.g., 0.5-2.0)
 STEP 2: EXTRACT UNIQUE EMBEDDINGS (for uniformity)
 ┌───────────────────────────────────────────┐
 │ # For query embeddings:                   │
-│ head_ids = [ex.head_id for ex in batch]   │
-│ unique_head_indices = unique_ids(head_ids)│
+│ query_keys = [(ex.head_id, ex.relation)   │
+│               for ex in batch]             │
+│ unique_head_indices = unique_ids(query_keys)│
 │ q_unique = q_batch[unique_head_indices]   │
 │ # Size: [num_unique_heads, 768]           │
 │                                           │
@@ -847,6 +848,21 @@ PRE-COMPUTATION (shared, done once):
     Loss Function           Loss Function
 ```
 
+## 8. Eight Strategy Modes at a Glance
+
+| # | Strategy | Primary role |
+|---|---|---|
+| 1 | Neighbor-based context augmentation | Appends 1-hop graph neighbors to short entity text |
+| 2 | Triplet masking | Prevents known positives from being scored as negatives |
+| 3 | Learning-rate scheduling | Uses linear or cosine warmup/decay |
+| 4 | Gradient accumulation | Raises the effective batch size without extra VRAM |
+| 5 | Pre-batch negatives | Reuses cached vectors for InfoNCE-style contrastive training |
+| 6 | Mixed precision | Reduces activation memory and speeds up training |
+| 7 | Weight decay | Regularizes model parameters during optimization |
+| 8 | Fine-tunable temperature | Makes SimKGC temperature learnable when enabled |
+
+DirectAU uses 1, 2, 3, 4, 6, and 7 by default; 5 and 8 remain SimKGC-specific compatibility controls.
+
 ---
 
 ## Key Mathematical Notation (Integrated)
@@ -879,3 +895,4 @@ PRE-COMPUTATION (shared, done once):
 5. **Triplet Mask**: Only used in SimKGC mode
 6. **Unique Deduplication**: Only used in DirectAU mode (for uniformity)
 7. **Temperature Tuning**: Only learnable in SimKGC mode
+8. **Gradient Accumulation**: Outer-loop optimization strategy; it does not change the loss definition

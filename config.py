@@ -39,7 +39,7 @@ parser.add_argument('--use-uniformity-loss', action='store_true', default=False,
                     help='enable uniformity regularization term')
 parser.add_argument('--directau', action='store_true',
                     help='compatibility alias: sets --loss-type alignment --use-uniformity-loss')
-parser.add_argument('--directau-gamma', default=1.0, type=float, metavar='N',
+parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
 parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
                     help='epsilon used by DirectAU normalization helpers')
