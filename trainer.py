@@ -39,15 +39,29 @@ class Trainer:
         self._setup_training()
 
         # define loss function (criterion) and optimizer
-        if getattr(self.args, 'directau', False):
-            self.criterion = DirectAULoss(
+        loss_type = getattr(self.args, 'loss_type', 'infonce')
+        self.use_negative_sampling = bool(getattr(self.args, 'use_negative_sampling', True))
+        self.use_uniformity_loss = bool(getattr(self.args, 'use_uniformity_loss', False))
+        
+        self.use_infonce_loss = (loss_type == 'infonce')
+        self.use_alignment_loss = (loss_type == 'alignment')
+        
+        # Disable negative sampling flags when use_negative_sampling is False
+        if not self.use_negative_sampling:
+            self.args.pre_batch = 0
+            self.args.use_self_negative = False
+        
+        self.infonce_loss = nn.CrossEntropyLoss().cuda()
+        
+        if self.use_alignment_loss or self.use_uniformity_loss:
+            self.auxiliary_loss = DirectAULoss(
                 gamma=getattr(self.args, 'directau_gamma', 1.0),
-                eps=getattr(self.args, 'directau_eps', 1e-12)
+                eps=getattr(self.args, 'directau_eps', 1e-12),
+                use_alignment=self.use_alignment_loss,
+                use_uniformity=self.use_uniformity_loss,
             ).cuda()
-            self.directau_mode = True
         else:
-            self.criterion = nn.CrossEntropyLoss().cuda()
-            self.directau_mode = False
+            self.auxiliary_loss = None
 
         self.optimizer = AdamW([p for p in self.model.parameters() if p.requires_grad],
                                lr=args.lr,
@@ -80,6 +94,24 @@ class Trainer:
                 collate_fn=collate,
                 num_workers=args.workers,
                 pin_memory=True)
+
+    def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, batch_exs, batch_size):
+        total_loss = None
+
+        if self.use_infonce_loss and self.use_negative_sampling:
+            total_loss = self.infonce_loss(logits, labels)
+            total_loss = total_loss + self.infonce_loss(logits[:, :batch_size].t(), labels)
+        elif self.use_infonce_loss and not self.use_negative_sampling:
+            total_loss = self.infonce_loss(logits.diag().unsqueeze(-1), torch.zeros(batch_size, dtype=torch.long, device=logits.device))
+
+        if self.use_alignment_loss or self.use_uniformity_loss:
+            regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs)
+            total_loss = regularizer['loss'] if total_loss is None else total_loss + regularizer['loss']
+
+        if total_loss is None:
+            raise RuntimeError('No training objective is enabled; check --loss-type and flags')
+
+        return total_loss
 
     def train_loop(self):
         if self.args.use_amp:
@@ -287,15 +319,10 @@ class Trainer:
             outputs = get_model_obj(self.model).compute_logits(output_dict=outputs, batch_dict=batch_dict)
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
+            hr_vector, tail_vector = outputs.hr_vector, outputs.tail_vector
             
-            if self.directau_mode:
-                hr_vector = outputs.hr_vector
-                tail_vector = outputs.tail_vector
-                batch_exs = batch_dict.get('batch_data', None)
-                loss_dict = self.criterion(hr_vector, tail_vector, labels, batch_exs=batch_exs)
-                loss = loss_dict['loss']
-            else:
-                loss = self.criterion(logits, labels)
+            batch_exs = batch_dict.get('batch_data', None)
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size)
             
             losses.update(loss.item(), batch_size)
 
@@ -336,19 +363,11 @@ class Trainer:
             outputs = get_model_obj(self.model).compute_logits(output_dict=outputs, batch_dict=batch_dict)
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
+            hr_vector, tail_vector = outputs.hr_vector, outputs.tail_vector
             assert logits.size(0) == batch_size
             
-            if self.directau_mode:
-                hr_vector = outputs.hr_vector
-                tail_vector = outputs.tail_vector
-                batch_exs = batch_dict.get('batch_data', None)
-                loss_dict = self.criterion(hr_vector, tail_vector, labels, batch_exs=batch_exs)
-                loss = loss_dict['loss']
-            else:
-                # head + relation -> tail
-                loss = self.criterion(logits, labels)
-                # tail -> head + relation
-                loss += self.criterion(logits[:, :batch_size].t(), labels)
+            batch_exs = batch_dict.get('batch_data', None)
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size)
 
             acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
             top1.update(acc1.item(), batch_size)

@@ -31,8 +31,14 @@ parser.add_argument('--pooling', default='cls', type=str, metavar='N',
                     help='bert pooling')
 parser.add_argument('--dropout', default=0.1, type=float, metavar='N',
                     help='dropout on final linear layer')
+parser.add_argument('--loss-type', default='infonce', type=str, choices=['infonce', 'alignment'],
+                    help='loss function: infonce (original SimKGC) or alignment (DirectAU)')
+parser.add_argument('--use-negative-sampling', action='store_true', default=True,
+                    help='enable negative sampling in loss computation')
+parser.add_argument('--use-uniformity-loss', action='store_true', default=False,
+                    help='enable uniformity regularization term')
 parser.add_argument('--directau', action='store_true',
-                    help='enable DirectAU-style strict normalization and alignment+uniformity loss')
+                    help='compatibility alias: sets --loss-type alignment --use-uniformity-loss')
 parser.add_argument('--directau-gamma', default=1.0, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
 parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
@@ -116,7 +122,13 @@ assert not args.train_path or os.path.exists(args.train_path)
 assert args.pooling in ['cls', 'mean', 'max']
 assert args.task.lower() in ['wn18rr', 'fb15k237', 'wiki5m_ind', 'wiki5m_trans']
 assert args.lr_scheduler in ['linear', 'cosine']
-assert args.directau_gamma > 0
+assert args.loss_type in ['infonce', 'alignment']
+
+if args.directau:
+    args.loss_type = 'alignment'
+    args.use_uniformity_loss = True
+
+assert args.directau_gamma >= 0
 assert args.directau_eps > 0
 assert args.chunk_size > 0
 

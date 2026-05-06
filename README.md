@@ -159,12 +159,51 @@ python evaluate.py \
     --chunk-size 8192
 ```
 
-### DirectAU Configuration Options
+### Training Objective Configuration
 
-- `--directau`: Enable DirectAU mode (default: False)
-- `--directau-gamma`: Weight for uniformity loss relative to alignment loss (default: 1.0)
-- `--directau-eps`: Epsilon for numerical stability in normalization and log operations (default: 1e-12)
-- `--chunk-size`: Entity chunk size during evaluation to control memory usage (default: 8192)
+SimKGC supports flexible training objectives through three independent flags:
+
+**1. Loss Type** (`--loss-type`):
+- `infonce` (default): Original InfoNCE contrastive loss
+- `alignment`: DirectAU alignment loss (mean squared L2 distance)
+
+**2. Negative Sampling** (`--use-negative-sampling`):
+- `True` (default): Use in-batch negatives for contrastive learning
+- `False`: Use only positive pairs (alignment or pairwise losses)
+
+**3. Uniformity Loss** (`--use-uniformity-loss`):
+- `False` (default): No regularization
+- `True`: Add uniformity term to spread embeddings
+
+**Four Core Training Modes** (controlled by flags 2 and 3):
+| Mode | `--use-negative-sampling` | `--use-uniformity-loss` | Description |
+|------|---------------------------|------------------------|-------------|
+| 00 | False | False | Pure alignment loss on positive pairs |
+| 01 | False | True | Alignment + uniformity regularization |
+| 10 | True | False | InfoNCE with in-batch negatives only |
+| 11 | True | True | InfoNCE + uniformity regularization |
+
+**Example Commands**:
+```bash
+# Mode 00: Alignment only
+python main.py ... --loss-type alignment
+
+# Mode 01: Alignment + uniformity (DirectAU traditional)
+python main.py ... --loss-type alignment --use-uniformity-loss
+
+# Mode 10: InfoNCE without negative sampling
+python main.py ... --loss-type infonce --no-use-negative-sampling
+
+# Mode 11: InfoNCE + uniformity
+python main.py ... --loss-type infonce --use-uniformity-loss
+```
+
+**Legacy Compatibility**:
+- `--directau`: Shorthand for `--loss-type alignment --use-uniformity-loss`
+
+**Uniformity Configuration** (`--directau-gamma`, `--directau-eps`):
+- `--directau-gamma`: Weight for uniformity term (default: 1.0)
+- `--directau-eps`: Epsilon for numerical stability (default: 1e-12)
 
 ### Key Differences from SimKGC
 

@@ -127,7 +127,14 @@ class CustomBertModel(nn.Module, ABC):
         super().__init__()
         self.args = args
         self.config = AutoConfig.from_pretrained(args.pretrained_model)
-        self.directau = bool(getattr(args, 'directau', False))
+        
+        loss_type = getattr(args, 'loss_type', 'infonce')
+        self.use_uniformity_loss = bool(getattr(args, 'use_uniformity_loss', False))
+        self.use_negative_sampling = bool(getattr(args, 'use_negative_sampling', True))
+        
+        self.use_infonce_loss = (loss_type == 'infonce')
+        self.use_alignment_loss = (loss_type == 'alignment')
+        self.directau = self.use_alignment_loss
         self.directau_eps = float(getattr(args, 'directau_eps', 1e-12))
         self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / args.t).log(), requires_grad=args.finetune_t)
         self.add_margin = args.additive_margin
@@ -179,7 +186,7 @@ class CustomBertModel(nn.Module, ABC):
                                    mask=head_mask,
                                    token_type_ids=head_token_type_ids)
 
-        if self.directau:
+        if self.use_alignment_loss or self.use_uniformity_loss:
             hr_vector = F.normalize(hr_vector, p=2, dim=-1, eps=self.directau_eps)
             tail_vector = F.normalize(tail_vector, p=2, dim=-1, eps=self.directau_eps)
             head_vector = F.normalize(head_vector, p=2, dim=-1, eps=self.directau_eps)
@@ -194,38 +201,46 @@ class CustomBertModel(nn.Module, ABC):
         batch_size = hr_vector.size(0)
         labels = torch.arange(batch_size).to(hr_vector.device)
 
-        if self.directau:
-            logits = hr_vector.mm(tail_vector.t())
+        needs_embedding_grad = self.use_alignment_loss or self.use_uniformity_loss
+
+        logits = hr_vector.mm(tail_vector.t())
+        
+        # For alignment or uniformity modes, keep embeddings for gradient computation
+        if self.use_alignment_loss or self.use_uniformity_loss:
             return {'logits': logits,
                 'labels': labels,
                 'inv_t': torch.tensor(1.0, device=hr_vector.device),
                 'hr_vector': hr_vector,
                 'tail_vector': tail_vector}
-
-        logits = hr_vector.mm(tail_vector.t())
+        
+        # For InfoNCE mode (default)
         if self.training:
             logits -= torch.zeros(logits.size()).fill_diagonal_(self.add_margin).to(logits.device)
         logits *= self.log_inv_t.exp()
 
-        triplet_mask = batch_dict.get('triplet_mask', None)
-        if triplet_mask is not None:
-            logits.masked_fill_(~triplet_mask, -1e4)
+        # Apply triplet mask only if negative sampling is enabled
+        if self.use_negative_sampling:
+            triplet_mask = batch_dict.get('triplet_mask', None)
+            if triplet_mask is not None:
+                logits.masked_fill_(~triplet_mask, -1e4)
 
-        # if self.pre_batch > 0 and self.training:
-        #     pre_batch_logits = self._compute_pre_batch_logits(hr_vector, tail_vector, batch_dict)
-        #     logits = torch.cat([logits, pre_batch_logits], dim=-1)
+        # Pre-batch negatives: only if negative sampling is enabled
+        if self.pre_batch > 0 and self.training and self.use_negative_sampling:
+            pre_batch_logits = self._compute_pre_batch_logits(hr_vector, tail_vector, batch_dict)
+            logits = torch.cat([logits, pre_batch_logits], dim=-1)
 
-        # if self.args.use_self_negative and self.training:
-        #     head_vector = output_dict['head_vector']
-        #     self_neg_logits = torch.sum(hr_vector * head_vector, dim=1) * self.log_inv_t.exp()
-        #     self_negative_mask = batch_dict.get('self_negative_mask', None)
-        #     if self_negative_mask is None:
-        #         # Keep behavior stable when mask is unavailable (e.g., misconfigured test mode during training).
-        #         self_negative_mask = torch.ones(batch_size, dtype=torch.bool, device=hr_vector.device)
-        #     else:
-        #         self_negative_mask = self_negative_mask.to(hr_vector.device).bool()
-        #     self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
-        #     logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
+        # Self-negatives: only if negative sampling is enabled
+        if self.args.use_self_negative and self.training and self.use_negative_sampling:
+            head_vector = output_dict['head_vector']
+            self_neg_logits = torch.sum(hr_vector * head_vector, dim=1) * self.log_inv_t.exp()
+            self_negative_mask = batch_dict.get('self_negative_mask', None)
+            if self_negative_mask is None:
+                # Keep behavior stable when mask is unavailable (e.g., misconfigured test mode during training).
+                self_negative_mask = torch.ones(batch_size, dtype=torch.bool, device=hr_vector.device)
+            else:
+                self_negative_mask = self_negative_mask.to(hr_vector.device).bool()
+            self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
+            logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
 
         return {'logits': logits,
                 'labels': labels,
