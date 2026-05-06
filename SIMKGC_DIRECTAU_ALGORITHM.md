@@ -17,7 +17,7 @@
 
 The integration maintains SimKGC's **text-based encoder architecture** while replacing the contrastive loss with **DirectAU's alignment + uniformity approach** for more interpretable and theoretically motivated training.
 
-### Eight Strategy Modes
+### Eight Strategy Controls
 
 In addition to the core loss-mode split, the implementation and documentation expose eight strategy switches that control data context, optimization, and memory behavior:
 
@@ -32,7 +32,30 @@ In addition to the core loss-mode split, the implementation and documentation ex
 | 7 | Weight decay | Regularize model weights during optimization |
 | 8 | Fine-tunable temperature | Make SimKGC temperature learnable when needed |
 
-DirectAU primarily uses strategies 1, 2, 3, 4, 6, and 7; strategies 5 and 8 are SimKGC-oriented compatibility controls.
+DirectAU primarily uses controls 1, 2, 3, 4, 6, and 7; controls 5 and 8 are SimKGC-oriented compatibility controls.
+
+The three binary choices that define the eight modes are:
+
+| Choice | Off | On |
+|---|---|---|
+| Loss family | InfoNCE | DirectAU |
+| Context augmentation | Plain text only | `--use-link-graph` |
+| Execution profile | Standard precision | `--use-amp` |
+
+This gives $2^3 = 8$ concrete modes. The four InfoNCE modes keep the original SimKGC contrastive objective; the four DirectAU modes replace that objective with alignment + uniformity.
+
+| Mode | Loss family | Link graph | AMP | Notes |
+|---|---|---|---|---|
+| 1 | InfoNCE | Off | Off | Base SimKGC training path |
+| 2 | InfoNCE | Off | On | Same loss, lower precision for memory savings |
+| 3 | InfoNCE | On | Off | Adds 1-hop neighbor context |
+| 4 | InfoNCE | On | On | Graph context plus AMP |
+| 5 | DirectAU | Off | Off | DirectAU baseline |
+| 6 | DirectAU | Off | On | DirectAU with AMP |
+| 7 | DirectAU | On | Off | DirectAU plus graph context |
+| 8 | DirectAU | On | On | Full DirectAU configuration |
+
+InfoNCE-specific knobs such as `--pre-batch`, `--additive-margin`, `--use-self-negative`, and `--finetune-t` remain orthogonal options that only matter when the loss family is InfoNCE.
 
 ---
 
@@ -155,6 +178,35 @@ Where $\gamma = $ `--directau-gamma` (typically 1.0)
 - When $\gamma = 0$: Only alignment (triples match perfectly but may collapse)
 - When $\gamma = 1$: Balanced alignment and uniformity (recommended)
 - When $\gamma > 1$: Emphasis on uniformity (more spread, less tight alignment)
+
+---
+
+### 4. SimKGC InfoNCE Loss
+
+**Purpose**: Train the query embedding to rank the positive tail above all negative candidates in the batch and optional buffers.
+
+**Core Formula**:
+$$L_{\text{infonce}} = -\frac{1}{B} \sum_{i=1}^{B} \log \frac{\exp(s_{i,i})}{\sum_{j=1}^{M} \exp(s_{i,j})}$$
+
+Where:
+- $B$ is the current batch size
+- $M$ is the number of candidate tails after adding optional negatives
+- $s_{i,j}$ is the similarity score for query $i$ and candidate $j$
+
+**Score Construction**:
+1. Compute in-batch dot products: $q_i \cdot t_j$
+2. Scale scores by inverse temperature $\exp(\text{log\_inv\_t})$
+3. Subtract the additive margin from the diagonal during training
+4. Append pre-batch negatives when `--pre-batch > 0`
+5. Append self-negatives when `--use-self-negative`
+6. Apply triplet masking to remove known positives
+7. Compute cross entropy with labels `[0, 1, ..., B-1]`
+
+**Behavioral Notes**:
+- Lower temperature makes the distribution sharper
+- Pre-batch negatives increase candidate diversity without new forward passes
+- Self-negatives make the query compete against its own head embedding
+- Triplet masking keeps known true triples out of the negative set
 
 ---
 

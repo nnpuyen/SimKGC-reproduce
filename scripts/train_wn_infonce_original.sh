@@ -48,3 +48,25 @@ python3 -u main.py \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"
+
+test_path="${DATA_DIR}/test_w_label.txt.json"
+if [ ! -f "${test_path}" ]; then
+  test_path="${DATA_DIR}/test_w_label.txt"
+fi
+
+neighbor_weight=0.05
+rerank_n_hop=2
+if [ "${TASK}" = "WN18RR" ]; then
+  # WordNet is a sparse graph; use more hops for rerank during test-time evaluation.
+  rerank_n_hop=5
+fi
+
+python3 -u evaluate.py \
+--task "${TASK}" \
+--is-test \
+--eval-model-path "${OUTPUT_DIR}" \
+--output-dir "${OUTPUT_DIR}" \
+--neighbor-weight "${neighbor_weight}" \
+--rerank-n-hop "${rerank_n_hop}" \
+--train-path "${DATA_DIR}/train.txt.json" \
+--valid-path "${test_path}"

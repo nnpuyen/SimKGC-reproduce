@@ -250,15 +250,11 @@ class Trainer:
             self.evaluate_triple_classification_inplace(self.model, test_label_path, log_path)
 
         # Evaluate link prediction on test set with current model (inplace, no checkpoint)
-        # Nếu valid_path là _w_label.txt, lấy test_w_label.txt (từ đó chỉ lấy label=1 cho link prediction)
-        # Nếu valid_path là .txt, lấy test.txt
+        # Always use test.txt (not labeled version) for link prediction evaluation
         if self.args.valid_path:
-            if self.args.valid_path.endswith('_w_label.txt'):
-                test_eval_path = self.args.valid_path.replace('valid_w_label.txt', 'test_w_label.txt')
-            elif self.args.valid_path.endswith('.txt'):
-                test_eval_path = self.args.valid_path.replace('valid.txt', 'test.txt')
-            else:
-                test_eval_path = None
+            # Get data directory from valid_path
+            data_dir = os.path.dirname(self.args.valid_path)
+            test_eval_path = os.path.join(data_dir, 'test.txt')
         else:
             test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
         if test_eval_path and os.path.exists(test_eval_path):

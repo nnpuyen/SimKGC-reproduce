@@ -1094,15 +1094,18 @@ END FUNCTION
 
 
 LOSS FUNCTION simkgc_infonce:
-    L_infonce = CrossEntropy(logits with all strategies, labels)
-    
-    logits include:
+    L_infonce = CrossEntropy(logits, labels)
+    where loss_i = -log(exp(s_i,i) / sum_j exp(s_i,j))
+
+    logits are built from:
     • In-batch negatives (Q @ T^T)
+    • Temperature scaling (inv_t = exp(log_inv_t))
+    • Additive margin on the diagonal (training only)
     • Pre-batch negatives (Q @ Buffer^T)
     • Self-negatives (optional)
-    • Temperature scaling (inv_t)
-    • Additive margin (training only)
     • Triplet masking (prevent leakage)
+    
+    This is the original SimKGC contrastive objective.
 
 END FUNCTION
 ```
@@ -1125,7 +1128,7 @@ END FUNCTION
 
 ---
 
-## Eight Strategy Modes
+## Eight Strategy Controls
 
 | # | Strategy | Pseudocode hook |
 |---|---|---|
@@ -1137,6 +1140,29 @@ END FUNCTION
 | 6 | Mixed precision | `torch.autocast(...)` and `GradScaler` |
 | 7 | Weight decay | `AdamW(..., weight_decay=...)` |
 | 8 | Fine-tunable temperature | `log_inv_t` when `finetune_t` is enabled |
+
+---
+
+## Three Binary Choices -> Eight Modes
+
+| Binary choice | Off | On |
+|---|---|---|
+| Loss family | InfoNCE | DirectAU |
+| Context augmentation | Plain text only | `--use-link-graph` |
+| Execution profile | Standard precision | `--use-amp` |
+
+| Mode | Loss family | Link graph | AMP | Notes |
+|---|---|---|---|---|
+| 1 | InfoNCE | Off | Off | Base SimKGC path |
+| 2 | InfoNCE | Off | On | Same loss, lower precision |
+| 3 | InfoNCE | On | Off | Adds 1-hop context |
+| 4 | InfoNCE | On | On | Graph context plus AMP |
+| 5 | DirectAU | Off | Off | DirectAU baseline |
+| 6 | DirectAU | Off | On | DirectAU with AMP |
+| 7 | DirectAU | On | Off | DirectAU plus graph context |
+| 8 | DirectAU | On | On | Full DirectAU configuration |
+
+InfoNCE-only knobs such as temperature, additive margin, pre-batch negatives, and self-negatives are orthogonal to this 8-mode matrix.
 
 ---
 

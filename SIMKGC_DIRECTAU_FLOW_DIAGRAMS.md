@@ -650,10 +650,10 @@ STEP 7: INFONCE LOSS
 │ # Labels point to diagonal (positive)    │
 │                                           │
 │ loss = CrossEntropyLoss(logits, labels)   │
-│ # Equivalent to:                          │
-│ # L = -log(exp(logits[i,i]) /             │
-│ #          sum_j exp(logits[i,j]))        │
-│ #                                         │
+│ # L = -mean(log softmax(logits)[i, i])    │
+│ # logits already include temperature,     │
+│ # margin, pre-batch, self-negative, and   │
+│ # triplet-masking branches when enabled   │
 │ # Learns to match q_i with t_i (label i) │
 │ # while pushing q_i away from t_j (j≠i)  │
 └───────────────────────────────────────────┘
@@ -825,30 +825,28 @@ PRE-COMPUTATION (shared, done once):
 
 ## 7. Decision Tree: Mode Selection Impact
 
-```
-                    MODE SELECTION
-                          │
-                ┌─────────┴─────────┐
-                │                   │
-            --directau          (default)
-                │                   │
-          ┌─────┴──────┐      ┌─────┴──────┐
-          │            │      │            │
-    Normalize      Extract    Temperature  Pre-batch
-    Explicitly    Unique      Scaling      Negatives
-          │            │      │            │
-    ┌─────┴──────┐    │      │    ┌───────┴───────┐
-    │            │    │      │    │               │
-  Alignment    Uniformity   InfoNCE      Buffer
-    Loss         Loss        Loss       Management
-    │            │           │           │
-    └────┬───────┘           └────┬──────┘
-         │                        │
-    Total DirectAU         Total SimKGC
-    Loss Function           Loss Function
-```
+The eight concrete modes come from three independent binary choices:
 
-## 8. Eight Strategy Modes at a Glance
+| Binary choice | Off | On |
+|---|---|---|
+| Loss family | InfoNCE | DirectAU |
+| Context augmentation | Plain text only | `--use-link-graph` |
+| Execution profile | Standard precision | `--use-amp` |
+
+| Mode | Loss family | Link graph | AMP | Notes |
+|---|---|---|---|---|
+| 1 | InfoNCE | Off | Off | Base SimKGC path |
+| 2 | InfoNCE | Off | On | Same loss, lower precision |
+| 3 | InfoNCE | On | Off | Adds 1-hop context |
+| 4 | InfoNCE | On | On | Graph context plus AMP |
+| 5 | DirectAU | Off | Off | DirectAU baseline |
+| 6 | DirectAU | Off | On | DirectAU with AMP |
+| 7 | DirectAU | On | Off | DirectAU plus graph context |
+| 8 | DirectAU | On | On | Full DirectAU configuration |
+
+InfoNCE-only knobs such as temperature, additive margin, pre-batch negatives, and self-negatives are orthogonal to this 8-mode matrix.
+
+## 8. Eight Strategy Controls at a Glance
 
 | # | Strategy | Primary role |
 |---|---|---|

@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 import tqdm
 import torch
@@ -22,9 +23,35 @@ class BertPredictor:
         self.train_args = AttrDict()
         self.use_cuda = False
 
+    @staticmethod
+    def _resolve_checkpoint_path(ckt_path: str) -> str:
+        if os.path.isfile(ckt_path):
+            return ckt_path
+
+        if not os.path.isdir(ckt_path):
+            raise FileNotFoundError('Checkpoint path does not exist: {}'.format(ckt_path))
+
+        # Prefer the canonical best/last checkpoint files first.
+        preferred = ['model_best.mdl', 'model_last.mdl']
+        for name in preferred:
+            candidate = os.path.join(ckt_path, name)
+            if os.path.isfile(candidate):
+                return candidate
+
+        # Fall back to the newest training checkpoint in the directory.
+        checkpoint_files = glob.glob(os.path.join(ckt_path, 'checkpoint_*.mdl'))
+        if checkpoint_files:
+            checkpoint_files = sorted(checkpoint_files, key=os.path.getmtime, reverse=True)
+            return checkpoint_files[0]
+
+        raise FileNotFoundError(
+            'No checkpoint file found under directory: {}. Expected one of model_best.mdl, '
+            'model_last.mdl, or checkpoint_*.mdl'.format(ckt_path)
+        )
+
     def load(self, ckt_path, use_data_parallel=False):
-        assert os.path.exists(ckt_path)
-        ckt_dict = torch.load(ckt_path, map_location=lambda storage, loc: storage)
+        resolved_ckt_path = self._resolve_checkpoint_path(ckt_path)
+        ckt_dict = torch.load(resolved_ckt_path, map_location=lambda storage, loc: storage)
         self.train_args.__dict__ = ckt_dict['args']
         self._setup_args()
         build_tokenizer(self.train_args)
@@ -47,7 +74,7 @@ class BertPredictor:
         elif torch.cuda.is_available():
             self.model.cuda()
             self.use_cuda = True
-        logger.info('Load model from {} successfully'.format(ckt_path))
+        logger.info('Load model from {} successfully'.format(resolved_ckt_path))
 
     def _setup_args(self):
         for k, v in args.__dict__.items():
