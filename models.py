@@ -14,28 +14,31 @@ from triplet_mask import construct_mask
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
-    def __init__(self, gamma: float = 1.0, eps: float = 1e-12):
+    def __init__(self, gamma: float = 1.0, eps: float = 1e-12, use_alignment: bool = True, use_uniformity: bool = True):
         super().__init__()
         self.gamma = gamma
         self.eps = eps
+        self.use_alignment = use_alignment
+        self.use_uniformity = use_uniformity
     
     def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
                 labels: torch.tensor = None, batch_exs: list = None) -> dict:
         """
-        Compute DirectAU loss: alignment + uniformity.
+        Compute DirectAU loss: alignment and/or uniformity based on flags.
         
         Args:
             hr_vector: query vectors (batch_size, dim), normalized
             tail_vector: tail entity vectors (batch_size, dim), normalized
             labels: optional labels for batch (batch_size,)
+            batch_exs: batch examples for deduplication
         
         Returns:
             dict with 'loss', 'align_loss', 'uniform_loss'
         """
         batch_size = hr_vector.size(0)
         
-        align_loss = self._compute_align_loss(hr_vector, tail_vector)
-        uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size, batch_exs=batch_exs)
+        align_loss = self._compute_align_loss(hr_vector, tail_vector) if self.use_alignment else torch.tensor(0.0, device=hr_vector.device)
+        uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size, batch_exs=batch_exs) if self.use_uniformity else torch.tensor(0.0, device=hr_vector.device)
         
         total_loss = align_loss + self.gamma * uniform_loss
         

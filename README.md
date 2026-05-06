@@ -175,27 +175,44 @@ SimKGC supports flexible training objectives through three independent flags:
 - `False` (default): No regularization
 - `True`: Add uniformity term to spread embeddings
 
-**Four Core Training Modes** (controlled by flags 2 and 3):
-| Mode | `--use-negative-sampling` | `--use-uniformity-loss` | Description |
-|------|---------------------------|------------------------|-------------|
-| 00 | False | False | Pure alignment loss on positive pairs |
-| 01 | False | True | Alignment + uniformity regularization |
-| 10 | True | False | InfoNCE with in-batch negatives only |
-| 11 | True | True | InfoNCE + uniformity regularization |
+**Eight Training Modes** (all combinations of 3 binary flags):
+
+| Mode | Loss Type | Neg Sampling | Uniformity | Description |
+|------|-----------|--------------|------------|-------------|
+| **000** | infonce | ❌ | ❌ | Simple pairwise InfoNCE (no negatives, no uniformity) |
+| **001** | infonce | ❌ | ✅ | Pairwise InfoNCE + uniformity regularization |
+| **010** | infonce | ✅ | ❌ | Standard InfoNCE with in-batch negatives |
+| **011** | infonce | ✅ | ✅ | InfoNCE + negatives + uniformity |
+| **100** | alignment | ❌ | ❌ | Pure alignment loss (L2 distance only) |
+| **101** | alignment | ❌ | ✅ | Alignment + uniformity (DirectAU traditional) |
+| **110** | alignment | ✅ | ❌ | Alignment loss with in-batch negatives |
+| **111** | alignment | ✅ | ✅ | Alignment + negatives + uniformity |
 
 **Example Commands**:
 ```bash
-# Mode 00: Alignment only
+# Mode 000: Pairwise InfoNCE (no negatives)
+python main.py ... --loss-type infonce
+
+# Mode 001: Pairwise InfoNCE + uniformity
+python main.py ... --loss-type infonce --use-uniformity-loss
+
+# Mode 010: Standard InfoNCE (with negatives)
+python main.py ... --loss-type infonce --use-negative-sampling
+
+# Mode 011: InfoNCE + negatives + uniformity
+python main.py ... --loss-type infonce --use-negative-sampling --use-uniformity-loss
+
+# Mode 100: Pure alignment
 python main.py ... --loss-type alignment
 
-# Mode 01: Alignment + uniformity (DirectAU traditional)
+# Mode 101: Alignment + uniformity (DirectAU)
 python main.py ... --loss-type alignment --use-uniformity-loss
 
-# Mode 10: InfoNCE without negative sampling
-python main.py ... --loss-type infonce --no-use-negative-sampling
+# Mode 110: Alignment with negatives
+python main.py ... --loss-type alignment --use-negative-sampling
 
-# Mode 11: InfoNCE + uniformity
-python main.py ... --loss-type infonce --use-uniformity-loss
+# Mode 111: Alignment + negatives + uniformity
+python main.py ... --loss-type alignment --use-negative-sampling --use-uniformity-loss
 ```
 
 **Legacy Compatibility**:
