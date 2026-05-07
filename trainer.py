@@ -68,6 +68,10 @@ class Trainer:
                                weight_decay=args.weight_decay)
         report_num_trainable_parameters(self.model)
 
+        # tracking fields for loss components
+        self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'total_aux_loss': 0.0}
+        self.last_infonce_loss = 0.0
+
         train_dataset = Dataset(path=args.train_path, task=args.task)
         valid_dataset = Dataset(path=args.valid_path, task=args.task) if args.valid_path else None
         num_training_steps = args.epochs * len(train_dataset) // max(args.batch_size, 1)
@@ -97,16 +101,35 @@ class Trainer:
 
     def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, batch_exs, batch_size):
         total_loss = None
+        self.last_infonce_loss = 0.0
 
         if self.use_infonce_loss and self.use_negative_sampling:
             total_loss = self.infonce_loss(logits, labels)
             total_loss = total_loss + self.infonce_loss(logits[:, :batch_size].t(), labels)
+            try:
+                self.last_infonce_loss = float(total_loss.detach().cpu().item())
+            except Exception:
+                self.last_infonce_loss = 0.0
         elif self.use_infonce_loss and not self.use_negative_sampling:
             total_loss = self.infonce_loss(logits.diag().unsqueeze(-1), torch.zeros(batch_size, dtype=torch.long, device=logits.device))
+            try:
+                self.last_infonce_loss = float(total_loss.detach().cpu().item())
+            except Exception:
+                self.last_infonce_loss = 0.0
 
         if self.use_alignment_loss or self.use_uniformity_loss:
             regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs)
             total_loss = regularizer['loss'] if total_loss is None else total_loss + regularizer['loss']
+
+            # Store last regularizer components for logging/inspection
+            try:
+                self.last_regularizer = {
+                    'align_loss': float(regularizer.get('align_loss', 0.0).item() if hasattr(regularizer.get('align_loss', 0.0), 'item') else regularizer.get('align_loss', 0.0)),
+                    'uniform_loss': float(regularizer.get('uniform_loss', 0.0).item() if hasattr(regularizer.get('uniform_loss', 0.0), 'item') else regularizer.get('uniform_loss', 0.0)),
+                    'total_aux_loss': float(regularizer.get('loss', 0.0).item() if hasattr(regularizer.get('loss', 0.0), 'item') else regularizer.get('loss', 0.0)),
+                }
+            except Exception:
+                self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'total_aux_loss': 0.0}
 
         if total_loss is None:
             raise RuntimeError('No training objective is enabled; check --loss-type and flags')
@@ -363,9 +386,13 @@ class Trainer:
         top1 = AverageMeter('Acc@1', ':6.2f')
         top3 = AverageMeter('Acc@3', ':6.2f')
         inv_t = AverageMeter('InvT', ':6.2f')
+        align_meter = AverageMeter('Align', ':.6f')
+        uniform_meter = AverageMeter('Uniform', ':.6f')
+        infonce_meter = AverageMeter('InfoNCE', ':.6f')
+        gradnorm_meter = AverageMeter('GradNorm', ':.4f')
         progress = ProgressMeter(
             len(self.train_loader),
-            [losses, inv_t, top1, top3],
+            [losses, inv_t, top1, top3, align_meter, uniform_meter, infonce_meter, gradnorm_meter],
             prefix="Epoch: [{}]".format(epoch))
 
         for i, batch_dict in enumerate(self.train_loader):
@@ -398,17 +425,29 @@ class Trainer:
             inv_t.update(outputs.inv_t.item(), 1)
             losses.update(loss.item(), batch_size)
 
+            # Update auxiliary component meters if available
+            if hasattr(self, 'last_regularizer') and self.last_regularizer is not None:
+                align_meter.update(self.last_regularizer.get('align_loss', 0.0), batch_size)
+                uniform_meter.update(self.last_regularizer.get('uniform_loss', 0.0), batch_size)
+            # Update InfoNCE meter
+            try:
+                infonce_meter.update(getattr(self, 'last_infonce_loss', 0.0), batch_size)
+            except Exception:
+                pass
+
             # compute gradient and do SGD step
             self.optimizer.zero_grad()
             if self.args.use_amp:
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+                gradnorm_meter.update(float(grad_norm), 1)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+                gradnorm_meter.update(float(grad_norm), 1)
                 self.optimizer.step()
             self.scheduler.step()
 

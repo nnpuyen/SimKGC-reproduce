@@ -207,14 +207,16 @@ class CustomBertModel(nn.Module, ABC):
         needs_embedding_grad = self.use_alignment_loss or self.use_uniformity_loss
 
         logits = hr_vector.mm(tail_vector.t())
-        
-        # For alignment or uniformity modes, keep embeddings for gradient computation
-        if self.use_alignment_loss or self.use_uniformity_loss:
+
+        # If alignment-only mode (DirectAU replacing InfoNCE), return early with embeddings
+        # Note: do NOT early-return when only uniformity is enabled — uniformity should be
+        # applied as an auxiliary term alongside InfoNCE when configured.
+        if self.use_alignment_loss and not self.use_infonce_loss:
             return {'logits': logits,
-                'labels': labels,
-                'inv_t': torch.tensor(1.0, device=hr_vector.device),
-                'hr_vector': hr_vector,
-                'tail_vector': tail_vector}
+                    'labels': labels,
+                    'inv_t': torch.tensor(1.0, device=hr_vector.device),
+                    'hr_vector': hr_vector,
+                    'tail_vector': tail_vector}
         
         # For InfoNCE mode (default)
         if self.training:
@@ -246,10 +248,10 @@ class CustomBertModel(nn.Module, ABC):
             logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
 
         return {'logits': logits,
-                'labels': labels,
-                'inv_t': self.log_inv_t.detach().exp(),
-                'hr_vector': hr_vector.detach(),
-                'tail_vector': tail_vector.detach()}
+            'labels': labels,
+            'inv_t': self.log_inv_t.detach().exp(),
+            'hr_vector': hr_vector if needs_embedding_grad else hr_vector.detach(),
+            'tail_vector': tail_vector if needs_embedding_grad else tail_vector.detach()}
 
     def _compute_pre_batch_logits(self, hr_vector: torch.tensor,
                                   tail_vector: torch.tensor,
