@@ -241,27 +241,8 @@ class Trainer:
                     f.write(log_thresh + '\n')
                     f.write(log_cls + '\n')
 
-        # Evaluate triple classification on test set with current model (inplace, no checkpoint)
-        test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
-        if self.args.valid_label_path:
-            test_label_path = self.args.valid_label_path.replace('valid_w_label.txt', 'test_w_label.txt')
-        if test_label_path and os.path.exists(test_label_path):
-            log_path = os.path.join(self.args.model_dir, 'test_metrics.log')
-            self.evaluate_triple_classification_inplace(self.model, test_label_path, log_path)
-
-        # Evaluate link prediction on test set with current model (inplace, no checkpoint)
-        # Always use test.txt (not labeled version) for link prediction evaluation
-        if self.args.valid_path:
-            # Get data directory from valid_path
-            data_dir = os.path.dirname(self.args.valid_path)
-            test_eval_path = os.path.join(data_dir, 'test.txt')
-        else:
-            test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
-        if test_eval_path and os.path.exists(test_eval_path):
-            # Load the entity dictionary for evaluation (build_tokenizer only initializes tokenizer)
-            test_entity_dict = get_entity_dict()
-            test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
-            self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path)
+            if (epoch + 1) % 10 == 0 or epoch == self.args.epochs - 1:
+                self._run_test_evaluation(epoch)
 
         # Link prediction evaluation on validation set after each epoch
         valid_path = self.args.valid_path
@@ -276,6 +257,51 @@ class Trainer:
         print(f"[Timing] Total run time (s): {round(total_time, 2)}")
         logger.info(f"[Timing] Training time (s): {round(train_time, 2)}")
         logger.info(f"[Timing] Total run time (s): {round(total_time, 2)}")
+
+    def _run_test_evaluation(self, epoch):
+        test_results = {}
+
+        test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
+        if self.args.valid_label_path:
+            if self.args.valid_label_path.endswith('_w_label.txt'):
+                test_label_path = self.args.valid_label_path.replace('valid_w_label.txt', 'test_w_label.txt')
+            elif self.args.valid_label_path.endswith('.txt'):
+                test_label_path = self.args.valid_label_path.replace('valid.txt', 'test_w_label.txt')
+        if test_label_path and os.path.exists(test_label_path):
+            log_path = os.path.join(self.args.model_dir, 'test_metrics.log')
+            test_results['triple_classification'] = self.evaluate_triple_classification_inplace(
+                self.model,
+                test_label_path,
+                log_path,
+            )
+
+        if self.args.valid_path:
+            data_dir = os.path.dirname(self.args.valid_path)
+            test_eval_path = os.path.join(data_dir, 'test.txt')
+        else:
+            test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
+        if test_eval_path and os.path.exists(test_eval_path):
+            test_entity_dict = get_entity_dict()
+            test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
+            test_results['link_prediction'] = self.evaluate_link_prediction_inplace(
+                self.model,
+                test_eval_path,
+                test_entity_dict,
+                test_output_path,
+            )
+
+        if test_results:
+            summary = {
+                'epoch': epoch,
+                'stage': 'test',
+                'metrics': test_results,
+            }
+            summary_path = os.path.join(self.args.model_dir, f'test_metrics_epoch{epoch + 1}.json')
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(summary, f, ensure_ascii=False, indent=4)
+            log_str = f"[EPOCH {epoch}] Test summary: {json.dumps(summary, ensure_ascii=False)}"
+            print(log_str)
+            logger.info(log_str)
 
     @torch.no_grad()
     def _run_eval(self, epoch, step=0):
@@ -454,6 +480,10 @@ class Trainer:
         with open(output_log_path, 'a', encoding='utf-8') as f:
             f.write(log_thresh + '\n')
             f.write(log_cls + '\n')
+        return {
+            'threshold': float(threshold),
+            'metrics': metrics_cls,
+        }
 
     def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True):
         import torch
@@ -509,5 +539,7 @@ class Trainer:
         topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entities_tensor, target=target, examples=examples, batch_size=batch_size, chunk_size=chunk_size)
         log_str = f"[{eval_set}] Link Prediction Metrics: {json.dumps(metrics)}"
         print(log_str)
+        logger.info(log_str)
         with open(output_log_path, 'a', encoding='utf-8') as f:
             f.write(log_str + '\n')
+        return metrics
