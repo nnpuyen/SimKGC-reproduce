@@ -45,7 +45,7 @@ python3 -u main.py \
 --finetune-t \
 --loss-type alignment \
 --use-uniformity-loss \
---directau-gamma 0.0005 \
+--directau-gamma 0.5 \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"
