@@ -35,6 +35,8 @@ parser.add_argument('--loss-type', default='infonce', type=str, choices=['infonc
                     help='loss function: infonce (original SimKGC) or alignment (DirectAU)')
 parser.add_argument('--use-negative-sampling', action='store_true', default=True,
                     help='enable negative sampling in loss computation')
+parser.add_argument('--no-negative-sampling', dest='use_negative_sampling', action='store_false',
+                    help='disable negative sampling in loss computation')
 parser.add_argument('--use-uniformity-loss', action='store_true', default=False,
                     help='enable uniformity regularization term')
 parser.add_argument('--directau', action='store_true',

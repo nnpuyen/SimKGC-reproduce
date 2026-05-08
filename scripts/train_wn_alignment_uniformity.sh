@@ -46,6 +46,7 @@ python3 -u main.py \
 --loss-type alignment \
 --use-uniformity-loss \
 --directau-gamma 0.5 \
+--no-negative-sampling \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"
