@@ -45,7 +45,8 @@ python3 -u main.py \
 --finetune-t \
 --loss-type alignment \
 --use-uniformity-loss \
---directau-gamma 0.5 \
+--directau-gamma 1.0 \
+--directau-eps 1e-12
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \
