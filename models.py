@@ -205,8 +205,6 @@ class CustomBertModel(nn.Module, ABC):
         batch_size = hr_vector.size(0)
         labels = torch.arange(batch_size).to(hr_vector.device)
 
-        needs_embedding_grad = self.use_alignment_loss or self.use_uniformity_loss
-
         logits = hr_vector.mm(tail_vector.t())
 
         # If alignment-only mode (DirectAU replacing InfoNCE), return early with embeddings
@@ -251,8 +249,8 @@ class CustomBertModel(nn.Module, ABC):
         return {'logits': logits,
             'labels': labels,
             'inv_t': self.log_inv_t.detach().exp(),
-            'hr_vector': hr_vector if needs_embedding_grad else hr_vector.detach(),
-            'tail_vector': tail_vector if needs_embedding_grad else tail_vector.detach()}
+            'hr_vector': hr_vector.detach(),
+            'tail_vector': tail_vector.detach()}
 
     def _compute_pre_batch_logits(self, hr_vector: torch.tensor,
                                   tail_vector: torch.tensor,
