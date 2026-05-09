@@ -210,10 +210,12 @@ class Trainer:
 
         # Evaluate link prediction on test set with current model (inplace, no checkpoint)
         # Nếu valid_path là _w_label.txt, lấy test_w_label.txt (từ đó chỉ lấy label=1 cho link prediction)
-        # Nếu valid_path là .txt, lấy test.txt
+        # Nếu valid_path là .txt hoặc .json, lấy test.txt hoặc test.txt.json
         if self.args.valid_path:
             if self.args.valid_path.endswith('_w_label.txt'):
                 test_eval_path = self.args.valid_path.replace('valid_w_label.txt', 'test_w_label.txt')
+            elif self.args.valid_path.endswith('.txt.json'):
+                test_eval_path = self.args.valid_path.replace('valid.txt.json', 'test.txt.json')
             elif self.args.valid_path.endswith('.txt'):
                 test_eval_path = self.args.valid_path.replace('valid.txt', 'test.txt')
             else:
