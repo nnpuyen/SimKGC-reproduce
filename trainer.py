@@ -69,7 +69,7 @@ class Trainer:
         report_num_trainable_parameters(self.model)
 
         # tracking fields for loss components
-        self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'total_aux_loss': 0.0}
+        self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
         self.last_infonce_loss = 0.0
 
         train_dataset = Dataset(path=args.train_path, task=args.task)
@@ -126,10 +126,11 @@ class Trainer:
                 self.last_regularizer = {
                     'align_loss': float(regularizer.get('align_loss', 0.0).item() if hasattr(regularizer.get('align_loss', 0.0), 'item') else regularizer.get('align_loss', 0.0)),
                     'uniform_loss': float(regularizer.get('uniform_loss', 0.0).item() if hasattr(regularizer.get('uniform_loss', 0.0), 'item') else regularizer.get('uniform_loss', 0.0)),
+                    'uniform_loss_scaled': float(regularizer.get('uniform_loss_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_scaled', 0.0), 'item') else regularizer.get('uniform_loss_scaled', 0.0)),
                     'total_aux_loss': float(regularizer.get('loss', 0.0).item() if hasattr(regularizer.get('loss', 0.0), 'item') else regularizer.get('loss', 0.0)),
                 }
             except Exception:
-                self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'total_aux_loss': 0.0}
+                self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
 
         if total_loss is None:
             raise RuntimeError('No training objective is enabled; check --loss-type and flags')
@@ -428,7 +429,8 @@ class Trainer:
             # Update auxiliary component meters if available
             if hasattr(self, 'last_regularizer') and self.last_regularizer is not None:
                 align_meter.update(self.last_regularizer.get('align_loss', 0.0), batch_size)
-                uniform_meter.update(self.last_regularizer.get('uniform_loss', 0.0), batch_size)
+                # display the gamma-scaled uniformity (actual contribution to loss)
+                uniform_meter.update(self.last_regularizer.get('uniform_loss_scaled', self.last_regularizer.get('uniform_loss', 0.0)), batch_size)
             # Update InfoNCE meter
             try:
                 infonce_meter.update(getattr(self, 'last_infonce_loss', 0.0), batch_size)
