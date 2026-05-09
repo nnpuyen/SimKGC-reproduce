@@ -42,7 +42,6 @@ python3 -u main.py \
 --print-freq 20 \
 --additive-margin 0.02 \
 --use-amp \
---use-self-negative \
 --pre-batch 0 \
 --finetune-t \
 --epochs 50 \
