@@ -19,7 +19,7 @@ from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj
 from metric import accuracy
 from models import build_model, ModelOutput
-from dict_hub import build_tokenizer
+from dict_hub import build_tokenizer, get_entity_dict
 from logger_config import logger
 import os 
 
@@ -221,7 +221,7 @@ class Trainer:
         else:
             test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
         if test_eval_path and os.path.exists(test_eval_path):
-            test_entity_dict = build_tokenizer(self.args)
+            test_entity_dict = get_entity_dict()
             test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
             self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path)
 
@@ -397,7 +397,7 @@ class Trainer:
                             batch_dict[k] = batch_dict[k].cuda()
                     model.cuda()
                 output_dict = model(**batch_dict)
-                logits = model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                logits = get_model_obj(model).compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
                 prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
                 y_prob.extend(prob.tolist())
         threshold = find_global_threshold(y_true, y_prob)
@@ -416,7 +416,8 @@ class Trainer:
     def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True):
         import torch
         import json
-        from doc import load_data
+        from doc import load_data, Dataset, collate, Example
+        from utils import move_to_cuda
         model.eval()
         if not os.path.exists(eval_path):
             print(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
@@ -426,27 +427,50 @@ class Trainer:
         examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
         hr_vectors, _ = [], []
         with torch.no_grad():
-            for i in range(0, len(examples), batch_size):
-                batch = examples[i:i+batch_size]
-                batch_vec = [ex.vectorize() for ex in batch]
-                batch_dict = {k: [d[k] for d in batch_vec] for k in batch_vec[0] if k != 'obj'}
-                for k in batch_dict:
-                    batch_dict[k] = torch.tensor(batch_dict[k]) if isinstance(batch_dict[k][0], int) else batch_dict[k]
+            data_loader = torch.utils.data.DataLoader(
+                Dataset(path='', examples=examples, task=self.args.task),
+                num_workers=0,
+                batch_size=batch_size,
+                collate_fn=collate,
+                shuffle=False)
+
+            for batch_dict in data_loader:
                 if torch.cuda.is_available():
-                    for k in batch_dict:
-                        if isinstance(batch_dict[k], torch.Tensor):
-                            batch_dict[k] = batch_dict[k].cuda()
+                    batch_dict = move_to_cuda(batch_dict)
                     model.cuda()
-                outputs = model(**batch_dict)
+                outputs = get_model_obj(model)(**batch_dict)
                 hr_vectors.append(outputs['hr_vector'])
         hr_tensor = torch.cat(hr_vectors, dim=0)
-        entities_tensor = model(**{k: torch.tensor([d[k] for d in entity_dict.entity_exs]) for k in entity_dict.entity_exs[0] if k != 'obj'})['ent_vectors']
+        entity_examples = [Example(head_id='', relation='', tail_id=entity_ex.entity_id) for entity_ex in entity_dict.entity_exs]
+        entity_loader = torch.utils.data.DataLoader(
+            Dataset(path='', examples=entity_examples, task=self.args.task),
+            num_workers=0,
+            batch_size=max(batch_size, 512),
+            collate_fn=collate,
+            shuffle=False)
+
+        entity_vectors = []
+        for batch_dict in entity_loader:
+            batch_dict['only_ent_embedding'] = True
+            if torch.cuda.is_available():
+                batch_dict = move_to_cuda(batch_dict)
+                model.cuda()
+            outputs = get_model_obj(model)(**batch_dict)
+            entity_vectors.append(outputs['ent_vectors'])
+
+        entities_tensor = torch.cat(entity_vectors, dim=0)
         if torch.cuda.is_available():
             hr_tensor = hr_tensor.cuda()
             entities_tensor = entities_tensor.cuda()
         target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
-        topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entities_tensor, target=target, examples=examples, batch_size=batch_size)
+        topk_scores, topk_indices, metrics, ranks = compute_metrics(
+            hr_tensor=hr_tensor,
+            entities_tensor=entities_tensor,
+            target=target,
+            examples=examples,
+            batch_size=batch_size)
         log_str = f"[{eval_set}] Link Prediction Metrics: {json.dumps(metrics)}"
         print(log_str)
         with open(output_log_path, 'a', encoding='utf-8') as f:
             f.write(log_str + '\n')
+        return metrics
