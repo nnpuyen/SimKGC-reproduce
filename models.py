@@ -39,9 +39,9 @@ class DirectAULoss(nn.Module):
         
         align_loss = self._compute_align_loss(hr_vector, tail_vector) if self.use_alignment else torch.tensor(0.0, device=hr_vector.device)
         uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size, batch_exs=batch_exs) if self.use_uniformity else torch.tensor(0.0, device=hr_vector.device)
-        
+        print("Gamma:", self.gamma)
         total_loss = align_loss + self.gamma * uniform_loss
-        
+
         return {
             'loss': total_loss,
             'align_loss': align_loss.detach(),
