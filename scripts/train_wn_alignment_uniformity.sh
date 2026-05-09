@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 
+# Training script for Mode 011: InfoNCE + Negative Sampling + Uniformity Loss
+# 
+# All 8 supported training modes:
+# Mode 000: --loss-type infonce (pairwise, no uniformity)
+# Mode 001: --loss-type infonce --use-uniformity-loss
+# Mode 010: --loss-type infonce --use-negative-sampling (standard InfoNCE)
+# Mode 011: --loss-type infonce --use-negative-sampling --use-uniformity-loss (THIS SCRIPT)
+# Mode 100: --loss-type alignment (pure alignment)
+# Mode 101: --loss-type alignment --use-uniformity-loss (DirectAU traditional)
+# Mode 110: --loss-type alignment --use-negative-sampling
+# Mode 111: --loss-type alignment --use-negative-sampling --use-uniformity-loss
+
 set -x
 set -e
 
@@ -19,7 +31,7 @@ DIR="$( cd "$( dirname "$0" )" && cd .. && pwd )"
 echo "working directory: ${DIR}"
 
 if [ -z "$OUTPUT_DIR" ]; then
-  OUTPUT_DIR="${DIR}/checkpoint/${TASK}_$(date +%F-%H%M.%S)"
+  OUTPUT_DIR="${DIR}/checkpoint/${TASK}_mode011_$(date +%F-%H%M.%S)"
 fi
 if [ -z "$DATA_DIR" ]; then
   DATA_DIR="${DIR}/data/${TASK}"
@@ -42,9 +54,12 @@ python3 -u main.py \
 --print-freq 20 \
 --additive-margin 0.02 \
 --use-amp \
---use-self-negative \
 --pre-batch 0 \
 --finetune-t \
+--loss-type alignment \
+--use-uniformity-loss \
+--directau-gamma 0.5 \
+--no-negative-sampling \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"
