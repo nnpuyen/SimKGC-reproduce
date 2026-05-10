@@ -180,6 +180,7 @@ def eval_single_direction(predictor: BertPredictor,
                           batch_size=256) -> dict:
     start_time = time()
     print(f"eval_forward: {eval_forward}")
+    print(f"Loading examples from {args.valid_path}...")
     examples = load_data(args.valid_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
     hr_tensor, _ = predictor.predict_by_examples(examples)
