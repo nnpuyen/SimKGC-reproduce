@@ -268,13 +268,14 @@ class Trainer:
             if (epoch + 1) % 10 == 0 or epoch == self.args.epochs - 1:
                 self._run_test_evaluation(epoch)
 
-        # Link prediction evaluation on validation set after each epoch
-        valid_path = self.args.valid_path
-        if valid_path and os.path.exists(valid_path):
-            from dict_hub import get_entity_dict
-            entity_dict = get_entity_dict()
-            log_path = os.path.join(self.args.model_dir, 'valid_linkpred_metrics.log')
-            self.evaluate_link_prediction_inplace(self.model, valid_path, entity_dict, log_path, eval_forward=True)
+        self._run_test_evaluation(epoch)
+        # # Link prediction evaluation on validation set after each epoch
+        # valid_path = self.args.valid_path
+        # if valid_path and os.path.exists(valid_path):
+        #     from dict_hub import get_entity_dict
+        #     entity_dict = get_entity_dict()
+        #     log_path = os.path.join(self.args.model_dir, 'valid_linkpred_metrics.log')
+        #     self.evaluate_link_prediction_inplace(self.model, valid_path, entity_dict, log_path, eval_forward=True)
 
         total_time = time.time() - total_start_time
         print(f"[Timing] Training time (s): {round(train_time, 2)}")
