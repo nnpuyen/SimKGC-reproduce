@@ -119,8 +119,8 @@ class Dataset(torch.utils.data.dataset.Dataset):
     def __init__(self, path, task, examples=None):
         self.path_list = path.split(',')
         self.task = task
-        assert all(os.path.exists(path) for path in self.path_list) or examples
-        if examples:
+        assert examples is not None or all(os.path.exists(path) for path in self.path_list if path)
+        if examples is not None:
             self.examples = examples
         else:
             self.examples = []
