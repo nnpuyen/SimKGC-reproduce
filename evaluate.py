@@ -177,20 +177,23 @@ def predict_by_split():
 def eval_single_direction(predictor: BertPredictor,
                           entity_tensor: torch.tensor,
                           eval_forward=True,
-                          batch_size=256) -> dict:
+                          batch_size=256,
+                          eval_path=None) -> dict:
     start_time = time()
-    print(f"eval_forward: {eval_forward}")
-    print(f"Loading examples from {args.valid_path}...")
-    examples = load_data(args.valid_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
+    # Use provided eval_path or fall back to args.valid_path
+    data_path = eval_path if eval_path else args.valid_path
+    print(f"Evaluating {'forward' if eval_forward else 'backward'} direction using data from: {data_path}")
+    examples = load_data(data_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
     hr_tensor, _ = predictor.predict_by_examples(examples)
     hr_tensor = hr_tensor.to(entity_tensor.device)
     target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     logger.info('predict tensor done, compute metrics...')
 
+    chunk_size = getattr(args, 'chunk_size', 8192)
     topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entity_tensor,
                                                                 target=target, examples=examples,
-                                                                batch_size=batch_size)
+                                                                batch_size=batch_size, chunk_size=chunk_size)
     eval_dir = 'forward' if eval_forward else 'backward'
     logger.info('{} metrics: {}'.format(eval_dir, json.dumps(metrics)))
 
@@ -220,7 +223,6 @@ def eval_single_direction(predictor: BertPredictor,
 
     logger.info('Evaluation takes {} seconds'.format(round(time() - start_time, 3)))
     return metrics
-
 
 @torch.no_grad()
 def evaluate_triple_classification(predictor: BertPredictor, label_path: str, output_dir: str,
