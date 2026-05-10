@@ -14,7 +14,6 @@ from dict_hub import get_entity_dict, get_all_triplet_dict
 from triplet import EntityDict
 from rerank import rerank_by_graph
 from metric_classification import classification_metrics, find_global_threshold
-from utils import get_model_obj, call_model_forward
 from logger_config import logger
 
 
