@@ -301,19 +301,24 @@ class Trainer:
 
         if self.args.valid_path:
             data_dir = os.path.dirname(self.args.valid_path)
-            test_eval_path = os.path.join(data_dir, 'test.txt')
+            test_eval_path = os.path.join(data_dir, 'test.json.txt')
         else:
-            test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
+            test_eval_path = os.path.join('data', 'WN18RR', 'test.json.txt')
         if test_eval_path and os.path.exists(test_eval_path):
             test_entity_dict = get_entity_dict()
             test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
-            test_results['link_prediction'] = self.evaluate_link_prediction_inplace(
-                self.model,
-                test_eval_path,
-                test_entity_dict,
-                test_output_path,
-            )
-
+            # Evaluate both forward and backward directions for test set
+            forward_metrics = self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=True)
+            backward_metrics = self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=False)
+            # Average metrics
+            if forward_metrics and backward_metrics:
+                avg_metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
+                log_str = f"[TEST] Forward: {json.dumps(forward_metrics)}\nBackward: {json.dumps(backward_metrics)}\nAverage: {json.dumps(avg_metrics)}"
+                print(log_str)
+                logger.info(log_str)
+                with open(test_output_path, 'a', encoding='utf-8') as f:
+                    f.write(log_str + '\n')
+                test_results['link_prediction'] = avg_metrics
         if test_results:
             summary = {
                 'epoch': epoch,
