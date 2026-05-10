@@ -301,10 +301,15 @@ class Trainer:
             )
 
         if self.args.valid_path:
-            data_dir = os.path.dirname(self.args.valid_path)
-            test_eval_path = os.path.join(data_dir, 'test.json.txt')
+            if self.args.valid_path.endswith('.txt.json'):
+                test_eval_path = self.args.valid_path.replace('valid.txt.json', 'test.txt.json')
+            elif self.args.valid_path.endswith('.txt'):
+                test_eval_path = self.args.valid_path.replace('valid.txt', 'test.txt')
+            else:
+                data_dir = os.path.dirname(self.args.valid_path)
+                test_eval_path = os.path.join(data_dir, 'test.txt.json')
         else:
-            test_eval_path = os.path.join('data', 'WN18RR', 'test.json.txt')
+            test_eval_path = os.path.join('data', 'WN18RR', 'test.txt.json')
         if test_eval_path and os.path.exists(test_eval_path):
             test_entity_dict = get_entity_dict()
             test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
