@@ -14,8 +14,9 @@ from triplet_mask import construct_mask
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
-    def __init__(self, gamma: float = 1.0, eps: float = 1e-12, use_alignment: bool = True, use_uniformity: bool = True):
+    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12, use_alignment: bool = True, use_uniformity: bool = True):
         super().__init__()
+        self.alpha = alpha
         self.gamma = gamma
         self.eps = eps
         self.use_alignment = use_alignment
@@ -39,12 +40,14 @@ class DirectAULoss(nn.Module):
         
         align_loss = self._compute_align_loss(hr_vector, tail_vector) if self.use_alignment else torch.tensor(0.0, device=hr_vector.device)
         uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size, batch_exs=batch_exs) if self.use_uniformity else torch.tensor(0.0, device=hr_vector.device)
+        scaled_align = self.alpha * align_loss
         scaled_uniform = self.gamma * uniform_loss
-        total_loss = align_loss + scaled_uniform
+        total_loss = scaled_align + scaled_uniform
 
         return {
             'loss': total_loss,
             'align_loss': align_loss.detach(),
+            'align_loss_scaled': scaled_align.detach(),
             'uniform_loss': uniform_loss.detach(),
             'uniform_loss_scaled': scaled_uniform.detach(),
         }
@@ -136,8 +139,10 @@ class CustomBertModel(nn.Module, ABC):
         self.use_uniformity_loss = bool(getattr(args, 'use_uniformity_loss', False))
         self.use_negative_sampling = bool(getattr(args, 'use_negative_sampling', True))
         
-        self.use_infonce_loss = (loss_type == 'infonce')
-        self.use_alignment_loss = (loss_type == 'alignment')
+        self.use_infonce_loss = (loss_type in ['infonce', 'all'])
+        self.use_alignment_loss = (loss_type in ['alignment', 'all'])
+        if loss_type == 'all':
+            self.use_uniformity_loss = True
         self.directau = self.use_alignment_loss
         self.directau_eps = float(getattr(args, 'directau_eps', 1e-12))
         self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / args.t).log(), requires_grad=args.finetune_t)

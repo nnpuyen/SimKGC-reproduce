@@ -43,8 +43,10 @@ class Trainer:
         self.use_negative_sampling = bool(getattr(self.args, 'use_negative_sampling', True))
         self.use_uniformity_loss = bool(getattr(self.args, 'use_uniformity_loss', False))
         
-        self.use_infonce_loss = (loss_type == 'infonce')
-        self.use_alignment_loss = (loss_type == 'alignment')
+        self.use_infonce_loss = (loss_type in ['infonce', 'all'])
+        self.use_alignment_loss = (loss_type in ['alignment', 'all'])
+        if loss_type == 'all':
+            self.use_uniformity_loss = True
         
         # Disable negative sampling flags when use_negative_sampling is False
         if not self.use_negative_sampling:
@@ -55,6 +57,7 @@ class Trainer:
         
         if self.use_alignment_loss or self.use_uniformity_loss:
             self.auxiliary_loss = DirectAULoss(
+                alpha=getattr(self.args, 'directau_alpha', 1.0),
                 gamma=getattr(self.args, 'directau_gamma', 1.0),
                 eps=getattr(self.args, 'directau_eps', 1e-12),
                 use_alignment=self.use_alignment_loss,
@@ -69,7 +72,7 @@ class Trainer:
         report_num_trainable_parameters(self.model)
 
         # tracking fields for loss components
-        self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
+        self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
         self.last_infonce_loss = 0.0
 
         train_dataset = Dataset(path=args.train_path, task=args.task)
@@ -125,12 +128,13 @@ class Trainer:
             try:
                 self.last_regularizer = {
                     'align_loss': float(regularizer.get('align_loss', 0.0).item() if hasattr(regularizer.get('align_loss', 0.0), 'item') else regularizer.get('align_loss', 0.0)),
+                    'align_loss_scaled': float(regularizer.get('align_loss_scaled', regularizer.get('align_loss', 0.0)).item() if hasattr(regularizer.get('align_loss_scaled', regularizer.get('align_loss', 0.0)), 'item') else regularizer.get('align_loss_scaled', regularizer.get('align_loss', 0.0))),
                     'uniform_loss': float(regularizer.get('uniform_loss', 0.0).item() if hasattr(regularizer.get('uniform_loss', 0.0), 'item') else regularizer.get('uniform_loss', 0.0)),
                     'uniform_loss_scaled': float(regularizer.get('uniform_loss_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_scaled', 0.0), 'item') else regularizer.get('uniform_loss_scaled', 0.0)),
                     'total_aux_loss': float(regularizer.get('loss', 0.0).item() if hasattr(regularizer.get('loss', 0.0), 'item') else regularizer.get('loss', 0.0)),
                 }
             except Exception:
-                self.last_regularizer = {'align_loss': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
+                self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
 
         if total_loss is None:
             raise RuntimeError('No training objective is enabled; check --loss-type and flags')
@@ -439,7 +443,7 @@ class Trainer:
 
             # Update auxiliary component meters if available
             if hasattr(self, 'last_regularizer') and self.last_regularizer is not None:
-                align_meter.update(self.last_regularizer.get('align_loss', 0.0), batch_size)
+                align_meter.update(self.last_regularizer.get('align_loss_scaled', self.last_regularizer.get('align_loss', 0.0)), batch_size)
                 # display the gamma-scaled uniformity (actual contribution to loss)
                 uniform_meter.update(self.last_regularizer.get('uniform_loss_scaled', self.last_regularizer.get('uniform_loss', 0.0)), batch_size)
             # Update InfoNCE meter

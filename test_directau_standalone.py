@@ -12,8 +12,9 @@ import torch.nn.functional as F
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
-    def __init__(self, gamma: float = 1.0, eps: float = 1e-12):
+    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12):
         super().__init__()
+        self.alpha = alpha
         self.gamma = gamma
         self.eps = eps
     
@@ -24,7 +25,7 @@ class DirectAULoss(nn.Module):
         align_loss = self._compute_align_loss(hr_vector, tail_vector)
         uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size)
         
-        total_loss = align_loss + self.gamma * uniform_loss
+        total_loss = self.alpha * align_loss + self.gamma * uniform_loss
         
         return {
             'loss': total_loss,
@@ -73,7 +74,7 @@ def test_directau_loss_alignment():
     tail_vector = torch.randn(batch_size, dim)
     tail_vector = F.normalize(tail_vector, p=2, dim=-1)
     
-    loss_fn = DirectAULoss(gamma=0.0, eps=1e-12)  # Only alignment
+    loss_fn = DirectAULoss(alpha=1.0, gamma=0.0, eps=1e-12)  # Only alignment
     loss_dict = loss_fn(hr_vector, tail_vector)
     
     align_loss = loss_dict['align_loss'].item()
@@ -95,7 +96,7 @@ def test_directau_loss_uniformity():
     tail_vector = torch.randn(batch_size, dim)
     tail_vector = F.normalize(tail_vector, p=2, dim=-1)
     
-    loss_fn = DirectAULoss(gamma=1.0, eps=1e-12)
+    loss_fn = DirectAULoss(alpha=1.0, gamma=1.0, eps=1e-12)
     loss_dict = loss_fn(hr_vector, tail_vector)
     
     uniform_loss = loss_dict['uniform_loss'].item()
@@ -115,7 +116,7 @@ def test_directau_loss_combined():
     tail_vector = torch.randn(batch_size, dim)
     tail_vector = F.normalize(tail_vector, p=2, dim=-1)
     
-    loss_fn = DirectAULoss(gamma=1.0, eps=1e-12)
+    loss_fn = DirectAULoss(alpha=1.0, gamma=1.0, eps=1e-12)
     loss_dict = loss_fn(hr_vector, tail_vector)
     
     total_loss = loss_dict['loss'].item()
@@ -217,7 +218,7 @@ def test_loss_stability():
     print("\n=== Test 7: Loss Numerical Stability ===")
     
     batch_size, dim = 32, 768
-    loss_fn = DirectAULoss(gamma=1.0, eps=1e-12)
+    loss_fn = DirectAULoss(alpha=1.0, gamma=1.0, eps=1e-12)
     
     # Test with various vector magnitudes
     for scale in [0.1, 1.0, 10.0]:
