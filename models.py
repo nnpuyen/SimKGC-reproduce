@@ -251,11 +251,20 @@ class CustomBertModel(nn.Module, ABC):
             self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
             logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
 
+        # Keep gradients for auxiliary losses (alignment/uniformity) in "all" mode.
+        # Detach only when no auxiliary objective is active to reduce graph retention.
+        if self.use_alignment_loss or self.use_uniformity_loss:
+            out_hr_vector = hr_vector
+            out_tail_vector = tail_vector
+        else:
+            out_hr_vector = hr_vector.detach()
+            out_tail_vector = tail_vector.detach()
+
         return {'logits': logits,
             'labels': labels,
             'inv_t': self.log_inv_t.detach().exp(),
-            'hr_vector': hr_vector.detach(),
-            'tail_vector': tail_vector.detach()}
+            'hr_vector': out_hr_vector,
+            'tail_vector': out_tail_vector}
 
     def _compute_pre_batch_logits(self, hr_vector: torch.tensor,
                                   tail_vector: torch.tensor,
