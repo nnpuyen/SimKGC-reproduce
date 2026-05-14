@@ -84,10 +84,8 @@ class DirectAULoss(nn.Module):
         (head_id, relation) and tail vectors by tail_id before computing uniformity so that
         repeated query or entity occurrences in a batch are treated as one.
         """
-        # Deduplicate by entity ids when available to avoid "shattering" caused by dropout
+        # Deduplicate by tail ids when available to avoid "shattering" caused by dropout
         if batch_exs is not None:
-            # Extract composite query keys and tail ids in the same order as vectors
-            query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
             tail_ids = [ex.tail_id for ex in batch_exs]
 
             def unique_indices_by_id(ids):
@@ -97,23 +95,15 @@ class DirectAULoss(nn.Module):
                     if idv not in seen:
                         seen.add(idv)
                         uniq_idx.append(i)
-                return torch.tensor(uniq_idx, dtype=torch.long, device=hr_vector.device)
+                return torch.tensor(uniq_idx, dtype=torch.long, device=tail_vector.device)
 
-            # Select unique vectors according to ids
-            hr_idx = unique_indices_by_id(query_keys)
             tail_idx = unique_indices_by_id(tail_ids)
-
-            hr_unique = hr_vector[hr_idx]
             tail_unique = tail_vector[tail_idx]
-
-            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_unique)
             tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique)
         else:
-            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_vector)
             tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector)
 
-        total_uniform_loss = hr_uniform_loss + tail_uniform_loss
-        return total_uniform_loss
+        return tail_uniform_loss
 
 
 def build_model(args) -> nn.Module:
