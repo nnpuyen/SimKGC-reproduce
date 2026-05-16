@@ -106,6 +106,142 @@ class DirectAULoss(nn.Module):
         return tail_uniform_loss
 
 
+class DirectAURatioLoss(nn.Module):
+    """Log-ratio loss combining alignment and joint uniformity for DirectAU-ratio mode.
+
+    Loss formula:
+        L_log_ratio = log(1 + L_align / (-L_uniform + eps))
+
+    Alignment: mean squared L2 between matched hr and tail vectors.
+    Joint uniformity: computed on the concatenation of deduplicated hr and tail vectors.
+    """
+    def __init__(self,
+                 eps: float = 1e-12,
+                 max_ratio: float = 5.0,
+                 alpha: float = 1.0,
+                 gamma: float = 1.0):
+        super().__init__()
+        self.eps = eps
+        self.max_ratio = max_ratio
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def _unique_indices_by_key(self, keys: list, device: torch.device) -> torch.Tensor:
+        seen = set()
+        uniq_idx = []
+        for i, k in enumerate(keys):
+            if k not in seen:
+                seen.add(k)
+                uniq_idx.append(i)
+        if len(uniq_idx) == 0:
+            return torch.empty(0, dtype=torch.long, device=device)
+        return torch.tensor(uniq_idx, dtype=torch.long, device=device)
+
+    def _compute_uniform_loss_for_vectors(self, vectors: torch.tensor) -> torch.tensor:
+        if vectors.size(0) < 2:
+            return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
+
+        pairwise_dists = torch.cdist(vectors, vectors, p=2)
+        pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
+        pairwise_dists = pairwise_dists[pairwise_mask]
+
+        exp_term = torch.exp(-2 * pairwise_dists ** 2)
+        mean_exp = torch.mean(exp_term)
+
+        uniform_loss = torch.log(mean_exp + self.eps)
+        return uniform_loss
+
+    def _pairwise_distance_stats(self, vectors: torch.tensor) -> dict:
+        if vectors.size(0) < 2:
+            zero = torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
+            return {
+                'pairwise_dist_mean': zero,
+                'pairwise_dist_min': zero,
+                'pairwise_dist_max': zero,
+                'pairwise_repulsion': zero,
+            }
+
+        pairwise_dists = torch.cdist(vectors, vectors, p=2)
+        pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
+        off_diag = pairwise_dists[pairwise_mask]
+        repulsion = torch.mean(torch.exp(-2 * off_diag ** 2))
+        return {
+            'pairwise_dist_mean': off_diag.mean(),
+            'pairwise_dist_min': off_diag.min(),
+            'pairwise_dist_max': off_diag.max(),
+            'pairwise_repulsion': repulsion,
+        }
+
+    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor, labels: torch.tensor = None, batch_exs: list = None) -> dict:
+        device = hr_vector.device
+
+        # Alignment: mean squared L2
+        squared_l2 = torch.sum((hr_vector - tail_vector) ** 2, dim=-1)
+        align_loss = torch.mean(squared_l2)
+
+        # Deduplicate hr and tail vectors when batch_exs provided
+        if batch_exs is not None:
+            # build keys robustly with fallbacks
+            hr_keys = []
+            tail_keys = []
+            for ex in batch_exs:
+                head = getattr(ex, 'head_id', None)
+                if head is None:
+                    head = getattr(ex, 'head', None)
+                rel = getattr(ex, 'rel_id', None)
+                if rel is None:
+                    rel = getattr(ex, 'relation', None)
+                hr_keys.append((head, rel))
+
+                tail_id = getattr(ex, 'tail_id', None)
+                if tail_id is None:
+                    tail_id = getattr(ex, 'tail', None)
+                tail_keys.append(tail_id)
+
+            hr_idx = self._unique_indices_by_key(hr_keys, device)
+            tail_idx = self._unique_indices_by_key(tail_keys, device)
+
+            hr_unique = hr_vector[hr_idx] if hr_idx.numel() > 0 else torch.empty((0, hr_vector.size(1)), device=device)
+            tail_unique = tail_vector[tail_idx] if tail_idx.numel() > 0 else torch.empty((0, tail_vector.size(1)), device=device)
+        else:
+            hr_unique = hr_vector
+            tail_unique = tail_vector
+
+        concat = torch.cat([hr_unique, tail_unique], dim=0) if (hr_unique.size(0) + tail_unique.size(0)) > 0 else torch.empty((0, hr_vector.size(1)), device=device)
+
+        uniform_loss = self._compute_uniform_loss_for_vectors(concat)
+        pairwise_stats = self._pairwise_distance_stats(concat)
+
+        # denom = -L_uniform + eps; ensure >= eps for stability
+        denom = (-uniform_loss).clamp(min=self.eps)
+        ratio = align_loss / denom
+        if self.max_ratio is not None:
+            ratio = torch.clamp(ratio, max=self.max_ratio)
+        ratio_loss = torch.log1p(ratio)
+
+        # Keep the ratio objective, but add explicit repulsion so the uniformity term
+        # cannot be ignored when alignment gets small.
+        explicit_align_penalty = self.alpha * align_loss
+        explicit_uniform_penalty = self.gamma * uniform_loss
+        repulsion_penalty = self.gamma * pairwise_stats['pairwise_repulsion']
+        total_loss = ratio_loss + explicit_align_penalty + explicit_uniform_penalty + repulsion_penalty
+
+        return {
+            'loss': total_loss,
+            'align_loss': align_loss.detach(),
+            'uniform_loss': uniform_loss.detach(),
+            'log_ratio_loss': ratio_loss.detach(),
+            'explicit_align_penalty': explicit_align_penalty.detach(),
+            'explicit_uniform_penalty': explicit_uniform_penalty.detach(),
+            'repulsion_penalty': repulsion_penalty.detach(),
+            'pairwise_dist_mean': pairwise_stats['pairwise_dist_mean'].detach(),
+            'pairwise_dist_min': pairwise_stats['pairwise_dist_min'].detach(),
+            'pairwise_dist_max': pairwise_stats['pairwise_dist_max'].detach(),
+            'pairwise_repulsion': pairwise_stats['pairwise_repulsion'].detach(),
+        }
+ 
+
+
 def build_model(args) -> nn.Module:
     return CustomBertModel(args)
 
@@ -136,6 +272,16 @@ class CustomBertModel(nn.Module, ABC):
         self.directau = self.use_alignment_loss
         self.directau_eps = float(getattr(args, 'directau_eps', 1e-12))
         self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / args.t).log(), requires_grad=args.finetune_t)
+
+        # New mode: direct-au-ratio — single encoder, joint uniformity, log-ratio loss.
+        self.direct_au_ratio = bool(getattr(args, 'direct_au_ratio', False))
+        if self.direct_au_ratio:
+            # enforce using both alignment and uniformity in this mode
+            self.use_alignment_loss = True
+            self.use_uniformity_loss = True
+            # disable InfoNCE and negative sampling entirely for this mode
+            self.use_infonce_loss = False
+            self.use_negative_sampling = False
         self.add_margin = args.additive_margin
         self.batch_size = args.batch_size
         self.pre_batch = args.pre_batch
@@ -147,8 +293,14 @@ class CustomBertModel(nn.Module, ABC):
         self.offset = 0
         self.pre_batch_exs = [None for _ in range(num_pre_batch_vectors)]
 
-        self.hr_bert = AutoModel.from_pretrained(args.pretrained_model)
-        self.tail_bert = deepcopy(self.hr_bert)
+        if self.direct_au_ratio:
+            # single shared encoder for queries/tails/heads
+            self.encoder = AutoModel.from_pretrained(args.pretrained_model)
+            self.hr_bert = self.encoder
+            self.tail_bert = self.encoder
+        else:
+            self.hr_bert = AutoModel.from_pretrained(args.pretrained_model)
+            self.tail_bert = deepcopy(self.hr_bert)
 
     def _encode(self, encoder, token_ids, mask, token_type_ids):
         outputs = encoder(input_ids=token_ids,
@@ -201,6 +353,16 @@ class CustomBertModel(nn.Module, ABC):
         labels = torch.arange(batch_size).to(hr_vector.device)
 
         logits = hr_vector.mm(tail_vector.t())
+
+        # For direct-au-ratio mode, we do not compute InfoNCE or negative sampling;
+        # training uses the log-ratio loss computed from the returned embeddings.
+        if getattr(self, 'direct_au_ratio', False):
+            # Return logits/labels placeholders alongside embeddings for trainer compatibility.
+            return {'logits': logits,
+                    'labels': labels,
+                    'inv_t': torch.tensor(1.0, device=hr_vector.device),
+                    'hr_vector': hr_vector,
+                    'tail_vector': tail_vector}
 
         # If alignment-only mode (DirectAU replacing InfoNCE), return early with embeddings
         # Note: do NOT early-return when only uniformity is enabled — uniformity should be

@@ -41,6 +41,8 @@ parser.add_argument('--use-uniformity-loss', action='store_true', default=False,
                     help='enable uniformity regularization term')
 parser.add_argument('--directau', action='store_true',
                     help='compatibility alias: sets --loss-type alignment --use-uniformity-loss')
+parser.add_argument('--direct-au-ratio', action='store_true',
+                    help='enable Direct AU log-ratio mode (DirectAURatioLoss)')
 parser.add_argument('--directau-alpha', default=1.0, type=float, metavar='N',
                     help='weight for DirectAU alignment loss')
 parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',

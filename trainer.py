@@ -19,7 +19,7 @@ from doc import Dataset, collate
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj, call_model_forward
 from metric import accuracy
-from models import build_model, ModelOutput, DirectAULoss
+from models import build_model, ModelOutput, DirectAULoss, DirectAURatioLoss
 from dict_hub import build_tokenizer, get_entity_dict
 from logger_config import logger
 import os 
@@ -55,7 +55,17 @@ class Trainer:
         
         self.infonce_loss = nn.CrossEntropyLoss().cuda()
         
-        if self.use_alignment_loss or self.use_uniformity_loss:
+        # Auxiliary loss selection: support DirectAURatioLoss when requested
+        if getattr(self.args, 'direct_au_ratio', False):
+            self.auxiliary_loss = DirectAURatioLoss(
+                eps=getattr(self.args, 'directau_eps', 1e-12),
+                alpha=getattr(self.args, 'directau_alpha', 1.0),
+                gamma=getattr(self.args, 'directau_gamma', 1.0),
+            ).cuda()
+            # Ensure trainer-level flags reflect that auxiliary objective is active
+            self.use_alignment_loss = True
+            self.use_uniformity_loss = True
+        elif self.use_alignment_loss or self.use_uniformity_loss:
             self.auxiliary_loss = DirectAULoss(
                 alpha=getattr(self.args, 'directau_alpha', 1.0),
                 gamma=getattr(self.args, 'directau_gamma', 1.0),
@@ -72,7 +82,7 @@ class Trainer:
         report_num_trainable_parameters(self.model)
 
         # tracking fields for loss components
-        self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
+        self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0, 'log_ratio_loss': 0.0, 'explicit_align_penalty': 0.0, 'explicit_uniform_penalty': 0.0, 'repulsion_penalty': 0.0, 'pairwise_dist_mean': 0.0, 'pairwise_dist_min': 0.0, 'pairwise_dist_max': 0.0, 'pairwise_repulsion': 0.0}
         self.last_infonce_loss = 0.0
 
         train_dataset = Dataset(path=args.train_path, task=args.task)
@@ -132,9 +142,17 @@ class Trainer:
                     'uniform_loss': float(regularizer.get('uniform_loss', 0.0).item() if hasattr(regularizer.get('uniform_loss', 0.0), 'item') else regularizer.get('uniform_loss', 0.0)),
                     'uniform_loss_scaled': float(regularizer.get('uniform_loss_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_scaled', 0.0), 'item') else regularizer.get('uniform_loss_scaled', 0.0)),
                     'total_aux_loss': float(regularizer.get('loss', 0.0).item() if hasattr(regularizer.get('loss', 0.0), 'item') else regularizer.get('loss', 0.0)),
+                    'log_ratio_loss': float(regularizer.get('log_ratio_loss', regularizer.get('loss', 0.0)).item() if hasattr(regularizer.get('log_ratio_loss', regularizer.get('loss', 0.0)), 'item') else regularizer.get('log_ratio_loss', regularizer.get('loss', 0.0))),
+                    'explicit_align_penalty': float(regularizer.get('explicit_align_penalty', 0.0).item() if hasattr(regularizer.get('explicit_align_penalty', 0.0), 'item') else regularizer.get('explicit_align_penalty', 0.0)),
+                    'explicit_uniform_penalty': float(regularizer.get('explicit_uniform_penalty', 0.0).item() if hasattr(regularizer.get('explicit_uniform_penalty', 0.0), 'item') else regularizer.get('explicit_uniform_penalty', 0.0)),
+                    'repulsion_penalty': float(regularizer.get('repulsion_penalty', 0.0).item() if hasattr(regularizer.get('repulsion_penalty', 0.0), 'item') else regularizer.get('repulsion_penalty', 0.0)),
+                    'pairwise_dist_mean': float(regularizer.get('pairwise_dist_mean', 0.0).item() if hasattr(regularizer.get('pairwise_dist_mean', 0.0), 'item') else regularizer.get('pairwise_dist_mean', 0.0)),
+                    'pairwise_dist_min': float(regularizer.get('pairwise_dist_min', 0.0).item() if hasattr(regularizer.get('pairwise_dist_min', 0.0), 'item') else regularizer.get('pairwise_dist_min', 0.0)),
+                    'pairwise_dist_max': float(regularizer.get('pairwise_dist_max', 0.0).item() if hasattr(regularizer.get('pairwise_dist_max', 0.0), 'item') else regularizer.get('pairwise_dist_max', 0.0)),
+                    'pairwise_repulsion': float(regularizer.get('pairwise_repulsion', 0.0).item() if hasattr(regularizer.get('pairwise_repulsion', 0.0), 'item') else regularizer.get('pairwise_repulsion', 0.0)),
                 }
             except Exception:
-                self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
+                self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0, 'log_ratio_loss': 0.0, 'explicit_align_penalty': 0.0, 'explicit_uniform_penalty': 0.0, 'repulsion_penalty': 0.0, 'pairwise_dist_mean': 0.0, 'pairwise_dist_min': 0.0, 'pairwise_dist_max': 0.0, 'pairwise_repulsion': 0.0}
 
         if total_loss is None:
             raise RuntimeError('No training objective is enabled; check --loss-type and flags')
@@ -194,7 +212,7 @@ class Trainer:
                         self.model = model
                         self.task = task
                         self.batch_size = batch_size
-                    
+
                     def predict_by_examples(self, examples):
                         self.model.eval()
                         with torch.no_grad():
@@ -404,11 +422,15 @@ class Trainer:
         inv_t = AverageMeter('InvT', ':6.2f')
         align_meter = AverageMeter('Align', ':.6f')
         uniform_meter = AverageMeter('Uniform', ':.6f')
+        log_ratio_meter = AverageMeter('LogRatio', ':.6f')
+        pair_mean_meter = AverageMeter('PairMean', ':.6f')
+        pair_min_meter = AverageMeter('PairMin', ':.6f')
+        pair_max_meter = AverageMeter('PairMax', ':.6f')
         infonce_meter = AverageMeter('InfoNCE', ':.6f')
         gradnorm_meter = AverageMeter('GradNorm', ':.4f')
         progress = ProgressMeter(
             len(self.train_loader),
-            [losses, inv_t, top1, top3, align_meter, uniform_meter, infonce_meter, gradnorm_meter],
+            [losses, inv_t, top1, top3, align_meter, uniform_meter, log_ratio_meter, pair_mean_meter, pair_min_meter, pair_max_meter, infonce_meter, gradnorm_meter],
             prefix="Epoch: [{}]".format(epoch))
 
         for i, batch_dict in enumerate(self.train_loader):
@@ -443,9 +465,23 @@ class Trainer:
 
             # Update auxiliary component meters if available
             if hasattr(self, 'last_regularizer') and self.last_regularizer is not None:
-                align_meter.update(self.last_regularizer.get('align_loss_scaled', self.last_regularizer.get('align_loss', 0.0)), batch_size)
-                # display the gamma-scaled uniformity (actual contribution to loss)
-                uniform_meter.update(self.last_regularizer.get('uniform_loss_scaled', self.last_regularizer.get('uniform_loss', 0.0)), batch_size)
+                # Keep the old DirectAU logging convention in ratio mode:
+                # report raw alignment/uniformity values, not scaled placeholders.
+                if getattr(self.args, 'direct_au_ratio', False):
+                    align_value = self.last_regularizer.get('align_loss', 0.0)
+                    uniform_value = self.last_regularizer.get('uniform_loss', 0.0)
+                else:
+                    align_value = self.last_regularizer.get('align_loss_scaled', self.last_regularizer.get('align_loss', 0.0))
+                    # display the gamma-scaled uniformity (actual contribution to loss)
+                    uniform_value = self.last_regularizer.get('uniform_loss_scaled', self.last_regularizer.get('uniform_loss', 0.0))
+
+                align_meter.update(align_value, batch_size)
+                uniform_meter.update(uniform_value, batch_size)
+                # log-ratio auxiliary loss (if present)
+                log_ratio_meter.update(self.last_regularizer.get('log_ratio_loss', 0.0), batch_size)
+                pair_mean_meter.update(self.last_regularizer.get('pairwise_dist_mean', 0.0), batch_size)
+                pair_min_meter.update(self.last_regularizer.get('pairwise_dist_min', 0.0), batch_size)
+                pair_max_meter.update(self.last_regularizer.get('pairwise_dist_max', 0.0), batch_size)
             # Update InfoNCE meter
             try:
                 infonce_meter.update(getattr(self, 'last_infonce_loss', 0.0), batch_size)
@@ -472,7 +508,26 @@ class Trainer:
                 progress.display(i)
             if (i + 1) % self.args.eval_every_n_step == 0:
                 self._run_eval(epoch=epoch, step=i + 1)
-        logger.info('Learning rate: {}'.format(self.scheduler.get_last_lr()[0]))
+        # Log auxiliary loss summary for the epoch (includes log-ratio when enabled)
+        try:
+            lr = self.scheduler.get_last_lr()[0]
+        except Exception:
+            lr = None
+        logger.info('Epoch {} Aux losses: align={:.6f}, uniform={:.6f}, log_ratio={:.6f}, align_pen={:.6f}, uniform_pen={:.6f}, repulsion_pen={:.6f}, pair_mean={:.6f}, pair_min={:.6f}, pair_max={:.6f}, total_aux={:.6f}, lr={}'.format(
+            epoch,
+            float(self.last_regularizer.get('align_loss', 0.0)),
+            float(self.last_regularizer.get('uniform_loss', 0.0)),
+            float(self.last_regularizer.get('log_ratio_loss', self.last_regularizer.get('total_aux_loss', 0.0))),
+            float(self.last_regularizer.get('explicit_align_penalty', 0.0)),
+            float(self.last_regularizer.get('explicit_uniform_penalty', 0.0)),
+            float(self.last_regularizer.get('repulsion_penalty', 0.0)),
+            float(self.last_regularizer.get('pairwise_dist_mean', 0.0)),
+            float(self.last_regularizer.get('pairwise_dist_min', 0.0)),
+            float(self.last_regularizer.get('pairwise_dist_max', 0.0)),
+            float(self.last_regularizer.get('total_aux_loss', 0.0)),
+            lr
+        ))
+        logger.info('Learning rate: {}'.format(lr))
 
     def _setup_training(self):
         if torch.cuda.device_count() > 1:
