@@ -363,9 +363,39 @@ class Trainer:
     @torch.no_grad()
     def _run_eval(self, epoch, step=0):
         metric_dict = self.eval_epoch(epoch)
-        is_best = self.valid_loader and (self.best_metric is None or metric_dict['Acc@1'] > self.best_metric['Acc@1'])
+
+        # Compute validation link-prediction MRR (average forward+backward) and use it as the "best" criterion
+        valid_mrr = None
+        valid_eval_path = None
+        if getattr(self.args, 'valid_path', None):
+            # prefer provided valid_path as-is if it exists
+            if os.path.exists(self.args.valid_path):
+                valid_eval_path = self.args.valid_path
+            else:
+                # try common variants
+                if self.args.valid_path.endswith('.txt.json'):
+                    cand = self.args.valid_path
+                elif self.args.valid_path.endswith('.txt'):
+                    cand = self.args.valid_path
+                else:
+                    cand = self.args.valid_path
+                if os.path.exists(cand):
+                    valid_eval_path = cand
+
+        if valid_eval_path and os.path.exists(valid_eval_path):
+            valid_entity_dict = get_entity_dict()
+            valid_output_path = os.path.join(self.args.model_dir, 'valid_link_prediction.log')
+            forward_metrics = self.evaluate_link_prediction_inplace(self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
+            backward_metrics = self.evaluate_link_prediction_inplace(self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
+            if forward_metrics and backward_metrics:
+                try:
+                    valid_mrr = round((forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2, 4)
+                except Exception:
+                    valid_mrr = None
+
+        is_best = (valid_mrr is not None) and (self.best_metric is None or valid_mrr > self.best_metric.get('mrr', -1))
         if is_best:
-            self.best_metric = metric_dict
+            self.best_metric = {'mrr': valid_mrr}
 
         filename = '{}/checkpoint_{}_{}.mdl'.format(self.args.model_dir, epoch, step)
         if step == 0:
