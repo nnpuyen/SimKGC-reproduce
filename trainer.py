@@ -62,6 +62,10 @@ class Trainer:
                 eps=getattr(self.args, 'directau_eps', 1e-12),
                 use_alignment=self.use_alignment_loss,
                 use_uniformity=self.use_uniformity_loss,
+                relation_aware_uniformity=bool(getattr(self.args, 'uniformity_relation_aware', False)),
+                relation_weight_tau=float(getattr(self.args, 'uniformity_rel_tau', 1.0)),
+                relation_weight_min=float(getattr(self.args, 'uniformity_rel_w_min', 0.1)),
+                relation_weight_max=float(getattr(self.args, 'uniformity_rel_w_max', 1.0)),
             ).cuda()
         else:
             self.auxiliary_loss = None
@@ -102,7 +106,7 @@ class Trainer:
                 num_workers=args.workers,
                 pin_memory=True)
 
-    def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, batch_exs, batch_size):
+    def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, relation_vector, batch_exs, batch_size):
         total_loss = None
         self.last_infonce_loss = 0.0
 
@@ -121,7 +125,13 @@ class Trainer:
                 self.last_infonce_loss = 0.0
 
         if self.use_alignment_loss or self.use_uniformity_loss:
-            regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs)
+            regularizer = self.auxiliary_loss(
+                hr_vector,
+                tail_vector,
+                labels,
+                batch_exs=batch_exs,
+                relation_vector=relation_vector
+            )
             total_loss = regularizer['loss'] if total_loss is None else total_loss + regularizer['loss']
 
             # Store last regularizer components for logging/inspection
@@ -411,9 +421,10 @@ class Trainer:
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
             hr_vector, tail_vector = outputs.hr_vector, outputs.tail_vector
+            relation_vector = outputs.relation_vector
             
             batch_exs = batch_dict.get('batch_data', None)
-            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size)
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, relation_vector, batch_exs, batch_size)
             
             losses.update(loss.item(), batch_size)
 
@@ -459,10 +470,11 @@ class Trainer:
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
             hr_vector, tail_vector = outputs.hr_vector, outputs.tail_vector
+            relation_vector = outputs.relation_vector
             assert logits.size(0) == batch_size
             
             batch_exs = batch_dict.get('batch_data', None)
-            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size)
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, relation_vector, batch_exs, batch_size)
 
             acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
             top1.update(acc1.item(), batch_size)

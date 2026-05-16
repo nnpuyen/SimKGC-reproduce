@@ -71,7 +71,8 @@ def call_model_forward(model, batch_dict):
     Args:
         model: The model instance (may be wrapped with DataParallel)
         batch_dict: Dictionary containing batch data with keys: hr_token_ids, hr_mask, hr_token_type_ids,
-                   tail_token_ids, tail_mask, tail_token_type_ids, head_token_ids, head_mask, head_token_type_ids
+               relation_token_ids, relation_mask, relation_token_type_ids,
+               tail_token_ids, tail_mask, tail_token_type_ids, head_token_ids, head_mask, head_token_type_ids
     
     Returns:
         Model output dictionary
@@ -80,6 +81,9 @@ def call_model_forward(model, batch_dict):
         hr_token_ids=batch_dict['hr_token_ids'],
         hr_mask=batch_dict['hr_mask'],
         hr_token_type_ids=batch_dict['hr_token_type_ids'],
+        relation_token_ids=batch_dict['relation_token_ids'],
+        relation_mask=batch_dict['relation_mask'],
+        relation_token_type_ids=batch_dict['relation_token_type_ids'],
         tail_token_ids=batch_dict['tail_token_ids'],
         tail_mask=batch_dict['tail_mask'],
         tail_token_type_ids=batch_dict['tail_token_type_ids'],

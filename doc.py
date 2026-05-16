@@ -97,6 +97,8 @@ class Example:
         hr_encoded_inputs = _custom_tokenize(text=head_text,
                                              text_pair=self.relation)
 
+        relation_encoded_inputs = _custom_tokenize(text=self.relation)
+
         head_encoded_inputs = _custom_tokenize(text=head_text)
 
         tail_word = _parse_entity_name(self.tail)
@@ -104,6 +106,8 @@ class Example:
 
         out = {'hr_token_ids': hr_encoded_inputs['input_ids'],
                'hr_token_type_ids': hr_encoded_inputs['token_type_ids'],
+             'relation_token_ids': relation_encoded_inputs['input_ids'],
+             'relation_token_type_ids': relation_encoded_inputs['token_type_ids'],
                'tail_token_ids': tail_encoded_inputs['input_ids'],
                'tail_token_type_ids': tail_encoded_inputs['token_type_ids'],
                'head_token_ids': head_encoded_inputs['input_ids'],
@@ -197,6 +201,13 @@ def collate(batch_data: List[dict]) -> dict:
         [torch.LongTensor(ex['hr_token_type_ids']) for ex in batch_data],
         need_mask=False)
 
+    relation_token_ids, relation_mask = to_indices_and_mask(
+        [torch.LongTensor(ex['relation_token_ids']) for ex in batch_data],
+        pad_token_id=get_tokenizer().pad_token_id)
+    relation_token_type_ids = to_indices_and_mask(
+        [torch.LongTensor(ex['relation_token_type_ids']) for ex in batch_data],
+        need_mask=False)
+
     tail_token_ids, tail_mask = to_indices_and_mask(
         [torch.LongTensor(ex['tail_token_ids']) for ex in batch_data],
         pad_token_id=get_tokenizer().pad_token_id)
@@ -216,6 +227,9 @@ def collate(batch_data: List[dict]) -> dict:
         'hr_token_ids': hr_token_ids,
         'hr_mask': hr_mask,
         'hr_token_type_ids': hr_token_type_ids,
+        'relation_token_ids': relation_token_ids,
+        'relation_mask': relation_mask,
+        'relation_token_type_ids': relation_token_type_ids,
         'tail_token_ids': tail_token_ids,
         'tail_mask': tail_mask,
         'tail_token_type_ids': tail_token_type_ids,

@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from dataclasses import dataclass
+from typing import Optional
 from transformers import AutoModel, AutoConfig
 
 from triplet_mask import construct_mask
@@ -14,16 +15,26 @@ from triplet_mask import construct_mask
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
-    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12, use_alignment: bool = True, use_uniformity: bool = True):
+    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12,
+                 use_alignment: bool = True, use_uniformity: bool = True,
+                 relation_aware_uniformity: bool = False,
+                 relation_weight_tau: float = 1.0,
+                 relation_weight_min: float = 0.1,
+                 relation_weight_max: float = 1.0):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.eps = eps
         self.use_alignment = use_alignment
         self.use_uniformity = use_uniformity
+        self.relation_aware_uniformity = relation_aware_uniformity
+        self.relation_weight_tau = relation_weight_tau
+        self.relation_weight_min = relation_weight_min
+        self.relation_weight_max = relation_weight_max
     
-    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
-                labels: torch.tensor = None, batch_exs: list = None) -> dict:
+    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                labels: torch.tensor = None, batch_exs: list = None,
+                relation_vector: Optional[torch.tensor] = None) -> dict:
         """
         Compute DirectAU loss: alignment and/or uniformity based on flags.
         
@@ -39,7 +50,13 @@ class DirectAULoss(nn.Module):
         batch_size = hr_vector.size(0)
         
         align_loss = self._compute_align_loss(hr_vector, tail_vector) if self.use_alignment else torch.tensor(0.0, device=hr_vector.device)
-        uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size, batch_exs=batch_exs) if self.use_uniformity else torch.tensor(0.0, device=hr_vector.device)
+        uniform_loss = self._compute_uniform_loss(
+            hr_vector,
+            tail_vector,
+            batch_size,
+            batch_exs=batch_exs,
+            relation_vector=relation_vector
+        ) if self.use_uniformity else torch.tensor(0.0, device=hr_vector.device)
         scaled_align = self.alpha * align_loss
         scaled_uniform = self.gamma * uniform_loss
         total_loss = scaled_align + scaled_uniform
@@ -58,7 +75,8 @@ class DirectAULoss(nn.Module):
         align_loss = torch.mean(squared_l2_dist)
         return align_loss
     
-    def _compute_uniform_loss_for_vectors(self, vectors: torch.tensor) -> torch.tensor:
+    def _compute_uniform_loss_for_vectors(self, vectors: torch.tensor,
+                                          pairwise_weight: Optional[torch.tensor] = None) -> torch.tensor:
         """
         Uniformity loss for a single set of vectors: log of mean(exp(-2 * pairwise_distances)).
         Assumes the input vectors have already been deduplicated or pooled upstream.
@@ -71,13 +89,31 @@ class DirectAULoss(nn.Module):
         pairwise_dists = pairwise_dists[pairwise_mask]
 
         exp_term = torch.exp(-2 * pairwise_dists ** 2)
-        mean_exp = torch.mean(exp_term)
+        if pairwise_weight is not None:
+            weight = pairwise_weight[pairwise_mask]
+            weighted_sum = torch.sum(exp_term * weight)
+            mean_exp = weighted_sum / (torch.sum(weight) + self.eps)
+        else:
+            mean_exp = torch.mean(exp_term)
 
         uniform_loss = torch.log(mean_exp + self.eps)
         return uniform_loss
 
-    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
-                              batch_size: int, batch_exs: list = None) -> torch.tensor:
+    def _compute_relation_pair_weights(self, relation_vector: torch.tensor) -> Optional[torch.tensor]:
+        if relation_vector is None or relation_vector.size(0) < 2:
+            return None
+
+        rel_vec = F.normalize(relation_vector, p=2, dim=-1, eps=self.eps)
+        sim = rel_vec @ rel_vec.t()
+        if self.relation_weight_tau is not None and self.relation_weight_tau > 0:
+            sim = sim / self.relation_weight_tau
+        sim01 = torch.sigmoid(sim)
+        weight = self.relation_weight_max - (self.relation_weight_max - self.relation_weight_min) * sim01
+        return weight
+
+    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                              batch_size: int, batch_exs: list = None,
+                              relation_vector: Optional[torch.tensor] = None) -> torch.tensor:
         """
         Uniformity loss: compute separately for hr_vector and tail_vector, then sum.
         If `batch_exs` is provided, deduplicate query vectors by the composite key
@@ -99,9 +135,16 @@ class DirectAULoss(nn.Module):
 
             tail_idx = unique_indices_by_id(tail_ids)
             tail_unique = tail_vector[tail_idx]
-            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique)
+            relation_unique = relation_vector[tail_idx] if relation_vector is not None else None
+            pairwise_weight = None
+            if self.relation_aware_uniformity and relation_unique is not None:
+                pairwise_weight = self._compute_relation_pair_weights(relation_unique)
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique, pairwise_weight=pairwise_weight)
         else:
-            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector)
+            pairwise_weight = None
+            if self.relation_aware_uniformity and relation_vector is not None:
+                pairwise_weight = self._compute_relation_pair_weights(relation_vector)
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector, pairwise_weight=pairwise_weight)
 
         return tail_uniform_loss
 
@@ -117,6 +160,7 @@ class ModelOutput:
     inv_t: torch.tensor
     hr_vector: torch.tensor
     tail_vector: torch.tensor
+    relation_vector: Optional[torch.tensor]
 
 
 class CustomBertModel(nn.Module, ABC):
@@ -164,6 +208,7 @@ class CustomBertModel(nn.Module, ABC):
     def forward(self, hr_token_ids, hr_mask, hr_token_type_ids,
                 tail_token_ids, tail_mask, tail_token_type_ids,
                 head_token_ids, head_mask, head_token_type_ids,
+                relation_token_ids, relation_mask, relation_token_type_ids,
                 only_ent_embedding=False, **kwargs) -> dict:
         if only_ent_embedding:
             return self.predict_ent_embedding(tail_token_ids=tail_token_ids,
@@ -174,6 +219,11 @@ class CustomBertModel(nn.Module, ABC):
                                  token_ids=hr_token_ids,
                                  mask=hr_mask,
                                  token_type_ids=hr_token_type_ids)
+
+        relation_vector = self._encode(self.hr_bert,
+                           token_ids=relation_token_ids,
+                           mask=relation_mask,
+                           token_type_ids=relation_token_type_ids)
 
         tail_vector = self._encode(self.tail_bert,
                                    token_ids=tail_token_ids,
@@ -189,14 +239,17 @@ class CustomBertModel(nn.Module, ABC):
             hr_vector = F.normalize(hr_vector, p=2, dim=-1, eps=self.directau_eps)
             tail_vector = F.normalize(tail_vector, p=2, dim=-1, eps=self.directau_eps)
             head_vector = F.normalize(head_vector, p=2, dim=-1, eps=self.directau_eps)
+            relation_vector = F.normalize(relation_vector, p=2, dim=-1, eps=self.directau_eps)
 
         # DataParallel only support tensor/dict
         return {'hr_vector': hr_vector,
-                'tail_vector': tail_vector,
-                'head_vector': head_vector}
+            'tail_vector': tail_vector,
+            'head_vector': head_vector,
+            'relation_vector': relation_vector}
 
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         hr_vector, tail_vector = output_dict['hr_vector'], output_dict['tail_vector']
+        relation_vector = output_dict.get('relation_vector', None)
         batch_size = hr_vector.size(0)
         labels = torch.arange(batch_size).to(hr_vector.device)
 
@@ -210,7 +263,8 @@ class CustomBertModel(nn.Module, ABC):
                     'labels': labels,
                     'inv_t': torch.tensor(1.0, device=hr_vector.device),
                     'hr_vector': hr_vector,
-                    'tail_vector': tail_vector}
+                    'tail_vector': tail_vector,
+                    'relation_vector': relation_vector}
         
         # For InfoNCE mode (default)
         if self.training:
@@ -246,15 +300,18 @@ class CustomBertModel(nn.Module, ABC):
         if self.use_alignment_loss or self.use_uniformity_loss:
             out_hr_vector = hr_vector
             out_tail_vector = tail_vector
+            out_relation_vector = relation_vector
         else:
             out_hr_vector = hr_vector.detach()
             out_tail_vector = tail_vector.detach()
+            out_relation_vector = relation_vector.detach() if relation_vector is not None else None
 
         return {'logits': logits,
             'labels': labels,
             'inv_t': self.log_inv_t.detach().exp(),
             'hr_vector': out_hr_vector,
-            'tail_vector': out_tail_vector}
+            'tail_vector': out_tail_vector,
+            'relation_vector': out_relation_vector}
 
     def _compute_pre_batch_logits(self, hr_vector: torch.tensor,
                                   tail_vector: torch.tensor,

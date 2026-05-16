@@ -47,6 +47,14 @@ parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
 parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
                     help='epsilon used by DirectAU normalization helpers')
+parser.add_argument('--uniformity-relation-aware', action='store_true', default=True,
+                    help='use relation-aware weighting for uniformity loss (default: on)')
+parser.add_argument('--uniformity-rel-tau', default=1.0, type=float, metavar='N',
+                    help='temperature for relation similarity in uniformity weighting')
+parser.add_argument('--uniformity-rel-w-min', default=0.1, type=float, metavar='N',
+                    help='min weight when relations are similar')
+parser.add_argument('--uniformity-rel-w-max', default=1.0, type=float, metavar='N',
+                    help='max weight when relations are dissimilar')
 parser.add_argument('--chunk-size', default=8192, type=int, metavar='N',
                     help='number of entities processed per chunk during DirectAU inference')
 parser.add_argument('--use-amp', action='store_true',
@@ -139,6 +147,9 @@ assert args.directau_gamma >= 0
 assert args.directau_alpha >= 0
 assert args.directau_eps > 0
 assert args.chunk_size > 0
+assert args.uniformity_rel_tau > 0
+assert args.uniformity_rel_w_min >= 0
+assert args.uniformity_rel_w_max >= args.uniformity_rel_w_min
 
 if not args.model_dir and not args.output_dir:
     assert os.path.exists(args.eval_model_path), 'One of args.model_dir and args.eval_model_path should be valid path'
