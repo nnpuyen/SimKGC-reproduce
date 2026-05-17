@@ -166,6 +166,7 @@ SimKGC supports flexible training objectives through three independent flags:
 **1. Loss Type** (`--loss-type`):
 - `infonce` (default): Original InfoNCE contrastive loss
 - `alignment`: DirectAU alignment loss (mean squared L2 distance)
+- `bridge`: Bridged loss (alignment + cross-uniformity, negatives only)
 
 **2. Negative Sampling** (`--use-negative-sampling`):
 - `True` (default): Use in-batch negatives for contrastive learning
@@ -221,6 +222,20 @@ python main.py ... --loss-type alignment --use-negative-sampling --use-uniformit
 **Uniformity Configuration** (`--directau-gamma`, `--directau-eps`):
 - `--directau-gamma`: Weight for uniformity term (default: 1.0)
 - `--directau-eps`: Epsilon for numerical stability (default: 1e-12)
+
+### Bridged Loss
+
+The bridged objective combines alignment with a cross-uniformity term that pushes each query away from non-matching tails in the batch (positives are excluded from the denominator). This keeps the hypersphere geometry while using query-conditioned repulsion.
+
+Key hyperparameters:
+- `--bridge-alpha`: Weight for alignment term (default: 1.0)
+- `--bridge-gamma`: Weight for cross-uniformity term (default: 1.0)
+- `--bridge-beta`: Scale for squared distances inside the cross-uniformity term. If unset, it defaults to `1 / (2 * t)`.
+
+Example:
+```bash
+python main.py ... --loss-type bridge --bridge-alpha 1.0 --bridge-gamma 1.0 --bridge-beta 10.0
+```
 
 ### Key Differences from SimKGC
 

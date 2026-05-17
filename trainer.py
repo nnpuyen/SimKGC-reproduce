@@ -19,7 +19,7 @@ from doc import Dataset, collate
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj, call_model_forward
 from metric import accuracy
-from models import build_model, ModelOutput, DirectAULoss
+from models import build_model, ModelOutput, DirectAULoss, BridgedLoss
 from dict_hub import build_tokenizer, get_entity_dict
 from logger_config import logger
 import os 
@@ -45,8 +45,11 @@ class Trainer:
         
         self.use_infonce_loss = (loss_type in ['infonce', 'all'])
         self.use_alignment_loss = (loss_type in ['alignment', 'all'])
+        self.use_bridge_loss = (loss_type == 'bridge')
         if loss_type == 'all':
             self.use_uniformity_loss = True
+        if self.use_bridge_loss:
+            self.use_uniformity_loss = False
         
         # Disable negative sampling flags when use_negative_sampling is False
         if not self.use_negative_sampling:
@@ -55,7 +58,14 @@ class Trainer:
         
         self.infonce_loss = nn.CrossEntropyLoss().cuda()
         
-        if self.use_alignment_loss or self.use_uniformity_loss:
+        if self.use_bridge_loss:
+            self.auxiliary_loss = BridgedLoss(
+                alpha=getattr(self.args, 'bridge_alpha', 1.0),
+                gamma=getattr(self.args, 'bridge_gamma', 1.0),
+                beta=getattr(self.args, 'bridge_beta', 1.0),
+                eps=getattr(self.args, 'directau_eps', 1e-12),
+            ).cuda()
+        elif self.use_alignment_loss or self.use_uniformity_loss:
             self.auxiliary_loss = DirectAULoss(
                 alpha=getattr(self.args, 'directau_alpha', 1.0),
                 gamma=getattr(self.args, 'directau_gamma', 1.0),
@@ -102,7 +112,7 @@ class Trainer:
                 num_workers=args.workers,
                 pin_memory=True)
 
-    def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, batch_exs, batch_size):
+    def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, batch_exs, batch_size, triplet_mask=None):
         total_loss = None
         self.last_infonce_loss = 0.0
 
@@ -120,8 +130,11 @@ class Trainer:
             except Exception:
                 self.last_infonce_loss = 0.0
 
-        if self.use_alignment_loss or self.use_uniformity_loss:
-            regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs)
+        if self.use_alignment_loss or self.use_uniformity_loss or self.use_bridge_loss:
+            if self.use_bridge_loss:
+                regularizer = self.auxiliary_loss(hr_vector, tail_vector, triplet_mask=triplet_mask)
+            else:
+                regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs)
             total_loss = regularizer['loss'] if total_loss is None else total_loss + regularizer['loss']
 
             # Store last regularizer components for logging/inspection
@@ -413,7 +426,7 @@ class Trainer:
             hr_vector, tail_vector = outputs.hr_vector, outputs.tail_vector
             
             batch_exs = batch_dict.get('batch_data', None)
-            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size)
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size, batch_dict.get('triplet_mask', None))
             
             losses.update(loss.item(), batch_size)
 
@@ -462,7 +475,7 @@ class Trainer:
             assert logits.size(0) == batch_size
             
             batch_exs = batch_dict.get('batch_data', None)
-            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size)
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size, batch_dict.get('triplet_mask', None))
 
             acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
             top1.update(acc1.item(), batch_size)

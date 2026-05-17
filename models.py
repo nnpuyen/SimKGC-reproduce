@@ -116,6 +116,78 @@ class DirectAULoss(nn.Module):
         return total_uniform_loss
 
 
+class BridgedLoss(nn.Module):
+    """Alignment + cross-uniformity loss (negatives only) for bridged objective."""
+
+    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, beta: float = 1.0, eps: float = 1e-12):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.beta = beta
+        self.eps = eps
+
+    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                triplet_mask: torch.tensor = None) -> dict:
+        """
+        Compute bridged loss: alignment + cross-uniformity.
+
+        Args:
+            hr_vector: query vectors (batch_size, dim), normalized
+            tail_vector: tail entity vectors (batch_size, dim), normalized
+            triplet_mask: optional mask for valid negatives (batch_size, batch_size)
+
+        Returns:
+            dict with 'loss', 'align_loss', 'uniform_loss'
+        """
+        align_loss = self._compute_align_loss(hr_vector, tail_vector)
+        cross_uniform = self._compute_cross_uniformity(hr_vector, tail_vector, triplet_mask=triplet_mask)
+
+        scaled_align = self.alpha * align_loss
+        scaled_uniform = self.gamma * cross_uniform
+        total_loss = scaled_align + scaled_uniform
+
+        return {
+            'loss': total_loss,
+            'align_loss': align_loss.detach(),
+            'align_loss_scaled': scaled_align.detach(),
+            'uniform_loss': cross_uniform.detach(),
+            'uniform_loss_scaled': scaled_uniform.detach(),
+        }
+
+    def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
+        squared_l2_dist = torch.sum((hr_vector - tail_vector) ** 2, dim=-1)
+        return torch.mean(squared_l2_dist)
+
+    def _compute_cross_uniformity(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                                  triplet_mask: torch.tensor = None) -> torch.tensor:
+        if hr_vector.size(0) == 0:
+            return torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+
+        dist = torch.cdist(hr_vector, tail_vector, p=2)
+        dist2 = dist ** 2
+
+        if triplet_mask is not None:
+            mask = triplet_mask.to(hr_vector.device)
+            if mask.dtype != torch.bool:
+                mask = mask.bool()
+            mask = mask.clone()
+            if mask.shape == dist2.shape:
+                mask.fill_diagonal_(False)
+            else:
+                mask = None
+        else:
+            mask = None
+
+        if mask is None:
+            mask = torch.ones_like(dist2, dtype=torch.bool, device=hr_vector.device)
+            mask.fill_diagonal_(False)
+
+        neg_scores = (-self.beta * dist2).masked_fill(~mask, float('-inf'))
+        per_row = torch.logsumexp(neg_scores, dim=1)
+        per_row = torch.where(torch.isfinite(per_row), per_row, torch.zeros_like(per_row))
+        return torch.mean(per_row)
+
+
 def build_model(args) -> nn.Module:
     return CustomBertModel(args)
 
@@ -141,9 +213,10 @@ class CustomBertModel(nn.Module, ABC):
         
         self.use_infonce_loss = (loss_type in ['infonce', 'all'])
         self.use_alignment_loss = (loss_type in ['alignment', 'all'])
+        self.use_bridge_loss = (loss_type == 'bridge')
         if loss_type == 'all':
             self.use_uniformity_loss = True
-        self.directau = self.use_alignment_loss
+        self.directau = self.use_alignment_loss or self.use_bridge_loss
         self.directau_eps = float(getattr(args, 'directau_eps', 1e-12))
         self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / args.t).log(), requires_grad=args.finetune_t)
         self.add_margin = args.additive_margin
@@ -195,7 +268,7 @@ class CustomBertModel(nn.Module, ABC):
                                    mask=head_mask,
                                    token_type_ids=head_token_type_ids)
 
-        if self.use_alignment_loss or self.use_uniformity_loss:
+        if self.use_alignment_loss or self.use_uniformity_loss or self.use_bridge_loss:
             hr_vector = F.normalize(hr_vector, p=2, dim=-1, eps=self.directau_eps)
             tail_vector = F.normalize(tail_vector, p=2, dim=-1, eps=self.directau_eps)
             head_vector = F.normalize(head_vector, p=2, dim=-1, eps=self.directau_eps)
@@ -215,7 +288,7 @@ class CustomBertModel(nn.Module, ABC):
         # If alignment-only mode (DirectAU replacing InfoNCE), return early with embeddings
         # Note: do NOT early-return when only uniformity is enabled — uniformity should be
         # applied as an auxiliary term alongside InfoNCE when configured.
-        if self.use_alignment_loss and not self.use_infonce_loss:
+        if (self.use_alignment_loss or self.use_bridge_loss) and not self.use_infonce_loss:
             return {'logits': logits,
                     'labels': labels,
                     'inv_t': torch.tensor(1.0, device=hr_vector.device),
