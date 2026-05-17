@@ -53,6 +53,8 @@ parser.add_argument('--bridge-gamma', default=1.0, type=float, metavar='N',
                     help='weight for bridged cross-uniformity term')
 parser.add_argument('--bridge-beta', default=None, type=float, metavar='N',
                     help='scale for bridged cross-uniformity distances; default: 1/(2*t)')
+parser.add_argument('--bridge-gamma-warmup-epochs', default=5, type=int, metavar='N',
+                    help='linearly warm up bridged gamma over this many epochs')
 parser.add_argument('--chunk-size', default=8192, type=int, metavar='N',
                     help='number of entities processed per chunk during DirectAU inference')
 parser.add_argument('--use-amp', action='store_true',
@@ -153,6 +155,7 @@ assert args.directau_eps > 0
 assert args.bridge_alpha >= 0
 assert args.bridge_gamma >= 0
 assert args.bridge_beta > 0
+assert args.bridge_gamma_warmup_epochs >= 0
 assert args.chunk_size > 0
 
 if not args.model_dir and not args.output_dir:

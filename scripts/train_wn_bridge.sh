@@ -35,8 +35,9 @@ python3 -u main.py \
 --finetune-t \
 --loss-type bridge \
 --bridge-alpha 1.0 \
---bridge-gamma 1.0 \
---bridge-beta 10.0 \
+--bridge-gamma 0.2 \
+--bridge-beta 2.0 \
+--bridge-gamma-warmup-epochs 5 \
 --directau-eps 1e-12 \
 --no-negative-sampling \
 --epochs 50 \

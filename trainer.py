@@ -50,6 +50,8 @@ class Trainer:
             self.use_uniformity_loss = True
         if self.use_bridge_loss:
             self.use_uniformity_loss = False
+            self.bridge_gamma_base = float(getattr(self.args, 'bridge_gamma', 1.0))
+            self.bridge_gamma_warmup_epochs = int(getattr(self.args, 'bridge_gamma_warmup_epochs', 0))
         
         # Disable negative sampling flags when use_negative_sampling is False
         if not self.use_negative_sampling:
@@ -441,6 +443,13 @@ class Trainer:
         return metric_dict
 
     def train_epoch(self, epoch):
+        if self.use_bridge_loss and self.auxiliary_loss is not None:
+            if self.bridge_gamma_warmup_epochs > 0:
+                warmup_scale = min(1.0, (epoch + 1) / float(self.bridge_gamma_warmup_epochs))
+            else:
+                warmup_scale = 1.0
+            self.auxiliary_loss.gamma = self.bridge_gamma_base * warmup_scale
+
         losses = AverageMeter('Loss', ':.4')
         top1 = AverageMeter('Acc@1', ':6.2f')
         top3 = AverageMeter('Acc@3', ':6.2f')

@@ -183,9 +183,11 @@ class BridgedLoss(nn.Module):
             mask.fill_diagonal_(False)
 
         neg_scores = (-self.beta * dist2).masked_fill(~mask, float('-inf'))
-        per_row = torch.logsumexp(neg_scores, dim=1)
-        per_row = torch.where(torch.isfinite(per_row), per_row, torch.zeros_like(per_row))
-        return torch.mean(per_row)
+        logsumexp = torch.logsumexp(neg_scores, dim=1)
+        num_neg = mask.sum(dim=1).clamp(min=1)
+        logmeanexp = logsumexp - torch.log(num_neg.to(dist2.dtype))
+        logmeanexp = torch.where(torch.isfinite(logmeanexp), logmeanexp, torch.zeros_like(logmeanexp))
+        return torch.mean(logmeanexp)
 
 
 def build_model(args) -> nn.Module:
