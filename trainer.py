@@ -200,6 +200,49 @@ class Trainer:
                     f.write(log_thresh + '\n')
                     f.write(log_cls + '\n')
 
+            if (epoch + 1) % 10 == 0:
+                test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
+                if self.args.valid_label_path:
+                    test_label_path = self.args.valid_label_path.replace('valid_w_label.txt', 'test_w_label.txt')
+                if test_label_path and os.path.exists(test_label_path):
+                    log_path = os.path.join(self.args.model_dir, 'test_metrics.log')
+                    print(f"[EPOCH {epoch}] Running test triple classification inplace")
+                    logger.info(f"[EPOCH {epoch}] Running test triple classification inplace")
+                    self.evaluate_triple_classification_inplace(self.model, test_label_path, log_path)
+
+                if self.args.valid_path:
+                    if self.args.valid_path.endswith('_w_label.txt'):
+                        test_eval_path = self.args.valid_path.replace('valid_w_label.txt', 'test_w_label.txt')
+                    elif self.args.valid_path.endswith('.txt.json'):
+                        test_eval_path = self.args.valid_path.replace('valid.txt.json', 'test.txt.json')
+                    elif self.args.valid_path.endswith('.txt'):
+                        test_eval_path = self.args.valid_path.replace('valid.txt', 'test.txt')
+                    else:
+                        test_eval_path = None
+                else:
+                    test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
+                if test_eval_path and os.path.exists(test_eval_path):
+                    test_entity_dict = get_entity_dict()
+                    test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
+                    print(f"[EPOCH {epoch}] Running test link prediction inplace")
+                    logger.info(f"[EPOCH {epoch}] Running test link prediction inplace")
+                    forward_metrics = self.evaluate_link_prediction_inplace(
+                        self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=True)
+                    backward_metrics = self.evaluate_link_prediction_inplace(
+                        self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=False)
+                    if forward_metrics and backward_metrics:
+                        avg_metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4)
+                                       for k in forward_metrics}
+                        log_str = (
+                            f"[EPOCH {epoch}][TEST] Forward: {json.dumps(forward_metrics)}\n"
+                            f"Backward: {json.dumps(backward_metrics)}\n"
+                            f"Average: {json.dumps(avg_metrics)}"
+                        )
+                        print(log_str)
+                        logger.info(log_str)
+                        with open(test_output_path, 'a', encoding='utf-8') as f:
+                            f.write(log_str + '\n')
+
         # Evaluate triple classification on test set with current model (inplace, no checkpoint)
         test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
         if self.args.valid_label_path:
