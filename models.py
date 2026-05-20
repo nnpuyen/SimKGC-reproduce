@@ -70,7 +70,7 @@ class DirectAULoss(nn.Module):
         pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
         pairwise_dists = pairwise_dists[pairwise_mask]
 
-        exp_term = torch.exp(-2 * pairwise_dists ** 2)
+        exp_term = torch.exp(-3 * pairwise_dists ** 2)
         mean_exp = torch.mean(exp_term)
 
         uniform_loss = torch.log(mean_exp + self.eps)
