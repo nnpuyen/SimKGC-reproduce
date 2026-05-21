@@ -83,6 +83,11 @@ class BertPredictor:
                 logger.info('Set default attribute: {}={}'.format(k, v))
                 self.train_args.__dict__[k] = v
         logger.info('Args used in training: {}'.format(json.dumps(self.train_args.__dict__, ensure_ascii=False, indent=4)))
+        args.use_mf = bool(getattr(self.train_args, 'use_mf', False))
+        if args.use_mf:
+            args.mf_dim = int(getattr(self.train_args, 'mf_dim', args.mf_dim))
+            args.mf_init = str(getattr(self.train_args, 'mf_init', args.mf_init))
+            args.mf_dropout = float(getattr(self.train_args, 'mf_dropout', args.mf_dropout))
         args.use_link_graph = self.train_args.use_link_graph
         args.is_test = True
 
