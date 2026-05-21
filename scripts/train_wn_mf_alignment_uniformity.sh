@@ -40,6 +40,8 @@ python3 -u main.py \
 --mf-dim 256 \
 --mf-init xavier \
 --mf-dropout 0.0 \
+--mf-head-mask \
+--mf-head-mask-residual 1.0 \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"

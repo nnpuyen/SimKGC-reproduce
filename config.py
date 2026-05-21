@@ -39,6 +39,10 @@ parser.add_argument('--mf-init', default='xavier', type=str, choices=['xavier', 
                     help='initialization for matrix factorization embeddings')
 parser.add_argument('--mf-dropout', default=0.0, type=float, metavar='N',
                     help='dropout applied to matrix factorization embeddings')
+parser.add_argument('--mf-head-mask', action='store_true',
+                    help='apply relation-conditioned head masking in MF mode')
+parser.add_argument('--mf-head-mask-residual', default=1.0, type=float, metavar='N',
+                    help='residual scale for MF head masking gate')
 parser.add_argument('--loss-type', default='infonce', type=str, choices=['infonce', 'alignment', 'bridge', 'all'],
                     help='loss function: infonce (original SimKGC), alignment (DirectAU), bridge (alignment + cross-uniformity), or all (infonce + alignment + uniformity)')
 parser.add_argument('--use-negative-sampling', action='store_true', default=True,
@@ -187,5 +191,4 @@ except Exception:
 
 if not torch.cuda.is_available():
     args.use_amp = False
-    args.print_freq = 1
     warnings.warn('GPU is not available, set use_amp=False and print_freq=1')

@@ -212,6 +212,8 @@ class CustomBertModel(nn.Module, ABC):
         self.mf_dim = int(getattr(args, 'mf_dim', 256))
         self.mf_init = str(getattr(args, 'mf_init', 'xavier'))
         self.mf_dropout_rate = float(getattr(args, 'mf_dropout', 0.0))
+        self.use_mf_head_mask = bool(getattr(args, 'mf_head_mask', False))
+        self.mf_head_mask_residual = float(getattr(args, 'mf_head_mask_residual', 1.0))
         self.config = AutoConfig.from_pretrained(args.pretrained_model) if not self.use_mf else None
         
         loss_type = getattr(args, 'loss_type', 'infonce')
@@ -243,6 +245,7 @@ class CustomBertModel(nn.Module, ABC):
             relation2idx = get_relation2idx()
             self.entity_embeddings = nn.Embedding(len(entity_dict), self.mf_dim)
             self.relation_embeddings = nn.Embedding(len(relation2idx), self.mf_dim)
+            self.relation_mask = nn.Embedding(len(relation2idx), self.mf_dim)
             self.mf_dropout = nn.Dropout(self.mf_dropout_rate) if self.mf_dropout_rate > 0 else nn.Identity()
             self._init_mf_parameters()
         else:
@@ -253,12 +256,20 @@ class CustomBertModel(nn.Module, ABC):
         if self.mf_init == 'xavier':
             nn.init.xavier_uniform_(self.entity_embeddings.weight)
             nn.init.xavier_uniform_(self.relation_embeddings.weight)
+            nn.init.xavier_uniform_(self.relation_mask.weight)
         elif self.mf_init == 'normal':
             nn.init.normal_(self.entity_embeddings.weight, mean=0.0, std=0.02)
             nn.init.normal_(self.relation_embeddings.weight, mean=0.0, std=0.02)
+            nn.init.normal_(self.relation_mask.weight, mean=0.0, std=0.02)
         elif self.mf_init == 'uniform':
             nn.init.uniform_(self.entity_embeddings.weight, a=-0.1, b=0.1)
             nn.init.uniform_(self.relation_embeddings.weight, a=-0.1, b=0.1)
+            nn.init.uniform_(self.relation_mask.weight, a=-0.1, b=0.1)
+
+    def _apply_head_mask(self, head_vector: torch.Tensor, relation_ids: torch.Tensor) -> torch.Tensor:
+        gate = torch.sigmoid(self.relation_mask(relation_ids))
+        gate = 1.0 + (gate * self.mf_head_mask_residual)
+        return head_vector * gate
 
     def _encode(self, encoder, token_ids, mask, token_type_ids):
         outputs = encoder(input_ids=token_ids,
@@ -285,6 +296,9 @@ class CustomBertModel(nn.Module, ABC):
             head_vector = self.entity_embeddings(head_ids)
             relation_vector = self.relation_embeddings(relation_ids)
             tail_vector = self.entity_embeddings(tail_ids)
+
+            if self.use_mf_head_mask:
+                head_vector = self._apply_head_mask(head_vector, relation_ids)
 
             hr_vector = head_vector * relation_vector
             hr_vector = self.mf_dropout(hr_vector)
