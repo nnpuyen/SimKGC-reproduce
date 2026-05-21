@@ -54,7 +54,8 @@ class BertPredictor:
         ckt_dict = torch.load(resolved_ckt_path, map_location=lambda storage, loc: storage)
         self.train_args.__dict__ = ckt_dict['args']
         self._setup_args()
-        build_tokenizer(self.train_args)
+        if not getattr(self.train_args, 'use_mf', False):
+            build_tokenizer(self.train_args)
         self.model = build_model(self.train_args)
 
         # DataParallel will introduce 'module.' prefix

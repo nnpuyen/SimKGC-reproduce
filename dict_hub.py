@@ -12,6 +12,8 @@ all_triplet_dict: TripletDict = None
 link_graph: LinkGraph = None
 entity_dict: EntityDict = None
 tokenizer: AutoTokenizer = None
+relation2idx: dict = None
+relations: list = None
 
 
 def _init_entity_dict():
@@ -33,6 +35,14 @@ def _init_all_triplet_dict():
         all_triplet_dict = TripletDict(path_list=glob.glob(path_pattern))
 
 
+def _init_relation_dict():
+    global relation2idx, relations
+    if relation2idx is None or relations is None:
+        _init_all_triplet_dict()
+        relations = sorted(list(all_triplet_dict.relations))
+        relation2idx = {rel: idx for idx, rel in enumerate(relations)}
+
+
 def _init_link_graph():
     global link_graph
     if not link_graph:
@@ -52,6 +62,16 @@ def get_train_triplet_dict():
 def get_all_triplet_dict():
     _init_all_triplet_dict()
     return all_triplet_dict
+
+
+def get_relation2idx() -> dict:
+    _init_relation_dict()
+    return relation2idx
+
+
+def get_relations() -> list:
+    _init_relation_dict()
+    return relations
 
 
 def get_link_graph():

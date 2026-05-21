@@ -76,6 +76,14 @@ def call_model_forward(model, batch_dict):
     Returns:
         Model output dictionary
     """
+    if batch_dict.get('head_ids', None) is not None:
+        return model(
+            head_ids=batch_dict['head_ids'],
+            relation_ids=batch_dict['relation_ids'],
+            tail_ids=batch_dict['tail_ids'],
+            only_ent_embedding=batch_dict.get('only_ent_embedding', False)
+        )
+
     return model(
         hr_token_ids=batch_dict['hr_token_ids'],
         hr_mask=batch_dict['hr_mask'],

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from transformers import AutoModel, AutoConfig
 
 from triplet_mask import construct_mask
+from dict_hub import get_entity_dict, get_relation2idx
 
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
@@ -207,7 +208,11 @@ class CustomBertModel(nn.Module, ABC):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.config = AutoConfig.from_pretrained(args.pretrained_model)
+        self.use_mf = bool(getattr(args, 'use_mf', False))
+        self.mf_dim = int(getattr(args, 'mf_dim', 256))
+        self.mf_init = str(getattr(args, 'mf_init', 'xavier'))
+        self.mf_dropout_rate = float(getattr(args, 'mf_dropout', 0.0))
+        self.config = AutoConfig.from_pretrained(args.pretrained_model) if not self.use_mf else None
         
         loss_type = getattr(args, 'loss_type', 'infonce')
         self.use_uniformity_loss = bool(getattr(args, 'use_uniformity_loss', False))
@@ -224,16 +229,36 @@ class CustomBertModel(nn.Module, ABC):
         self.add_margin = args.additive_margin
         self.batch_size = args.batch_size
         self.pre_batch = args.pre_batch
+        hidden_size = self.mf_dim if self.use_mf else self.config.hidden_size
         num_pre_batch_vectors = max(1, self.pre_batch) * self.batch_size
-        random_vector = torch.randn(num_pre_batch_vectors, self.config.hidden_size)
+        random_vector = torch.randn(num_pre_batch_vectors, hidden_size)
         self.register_buffer("pre_batch_vectors",
                              nn.functional.normalize(random_vector, dim=1),
                              persistent=False)
         self.offset = 0
         self.pre_batch_exs = [None for _ in range(num_pre_batch_vectors)]
 
-        self.hr_bert = AutoModel.from_pretrained(args.pretrained_model)
-        self.tail_bert = deepcopy(self.hr_bert)
+        if self.use_mf:
+            entity_dict = get_entity_dict()
+            relation2idx = get_relation2idx()
+            self.entity_embeddings = nn.Embedding(len(entity_dict), self.mf_dim)
+            self.relation_embeddings = nn.Embedding(len(relation2idx), self.mf_dim)
+            self.mf_dropout = nn.Dropout(self.mf_dropout_rate) if self.mf_dropout_rate > 0 else nn.Identity()
+            self._init_mf_parameters()
+        else:
+            self.hr_bert = AutoModel.from_pretrained(args.pretrained_model)
+            self.tail_bert = deepcopy(self.hr_bert)
+
+    def _init_mf_parameters(self):
+        if self.mf_init == 'xavier':
+            nn.init.xavier_uniform_(self.entity_embeddings.weight)
+            nn.init.xavier_uniform_(self.relation_embeddings.weight)
+        elif self.mf_init == 'normal':
+            nn.init.normal_(self.entity_embeddings.weight, mean=0.0, std=0.02)
+            nn.init.normal_(self.relation_embeddings.weight, mean=0.0, std=0.02)
+        elif self.mf_init == 'uniform':
+            nn.init.uniform_(self.entity_embeddings.weight, a=-0.1, b=0.1)
+            nn.init.uniform_(self.relation_embeddings.weight, a=-0.1, b=0.1)
 
     def _encode(self, encoder, token_ids, mask, token_type_ids):
         outputs = encoder(input_ids=token_ids,
@@ -246,10 +271,35 @@ class CustomBertModel(nn.Module, ABC):
         cls_output = _pool_output(self.args.pooling, cls_output, mask, last_hidden_state)
         return cls_output
 
-    def forward(self, hr_token_ids, hr_mask, hr_token_type_ids,
-                tail_token_ids, tail_mask, tail_token_type_ids,
-                head_token_ids, head_mask, head_token_type_ids,
+    def forward(self, hr_token_ids=None, hr_mask=None, hr_token_type_ids=None,
+                tail_token_ids=None, tail_mask=None, tail_token_type_ids=None,
+                head_token_ids=None, head_mask=None, head_token_type_ids=None,
+                head_ids=None, relation_ids=None, tail_ids=None,
                 only_ent_embedding=False, **kwargs) -> dict:
+        if self.use_mf:
+            if only_ent_embedding:
+                ent_vectors = self.entity_embeddings(tail_ids)
+                ent_vectors = self.mf_dropout(ent_vectors)
+                return {'ent_vectors': ent_vectors.detach()}
+
+            head_vector = self.entity_embeddings(head_ids)
+            relation_vector = self.relation_embeddings(relation_ids)
+            tail_vector = self.entity_embeddings(tail_ids)
+
+            hr_vector = head_vector * relation_vector
+            hr_vector = self.mf_dropout(hr_vector)
+            tail_vector = self.mf_dropout(tail_vector)
+            head_vector = self.mf_dropout(head_vector)
+
+            if self.use_alignment_loss or self.use_uniformity_loss or self.use_bridge_loss:
+                hr_vector = F.normalize(hr_vector, p=2, dim=-1, eps=self.directau_eps)
+                tail_vector = F.normalize(tail_vector, p=2, dim=-1, eps=self.directau_eps)
+                head_vector = F.normalize(head_vector, p=2, dim=-1, eps=self.directau_eps)
+
+            return {'hr_vector': hr_vector,
+                    'tail_vector': tail_vector,
+                    'head_vector': head_vector}
+
         if only_ent_embedding:
             return self.predict_ent_embedding(tail_token_ids=tail_token_ids,
                                               tail_mask=tail_mask,

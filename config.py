@@ -31,6 +31,14 @@ parser.add_argument('--pooling', default='cls', type=str, metavar='N',
                     help='bert pooling')
 parser.add_argument('--dropout', default=0.1, type=float, metavar='N',
                     help='dropout on final linear layer')
+parser.add_argument('--use-mf', action='store_true',
+                    help='use matrix factorization embeddings instead of BERT encoders')
+parser.add_argument('--mf-dim', default=256, type=int, metavar='N',
+                    help='embedding dimension for matrix factorization mode')
+parser.add_argument('--mf-init', default='xavier', type=str, choices=['xavier', 'normal', 'uniform'],
+                    help='initialization for matrix factorization embeddings')
+parser.add_argument('--mf-dropout', default=0.0, type=float, metavar='N',
+                    help='dropout applied to matrix factorization embeddings')
 parser.add_argument('--loss-type', default='infonce', type=str, choices=['infonce', 'alignment', 'bridge', 'all'],
                     help='loss function: infonce (original SimKGC), alignment (DirectAU), bridge (alignment + cross-uniformity), or all (infonce + alignment + uniformity)')
 parser.add_argument('--use-negative-sampling', action='store_true', default=True,
@@ -157,6 +165,7 @@ assert args.bridge_gamma >= 0
 assert args.bridge_beta > 0
 assert args.bridge_gamma_warmup_epochs >= 0
 assert args.chunk_size > 0
+assert args.mf_dim > 0
 
 if not args.model_dir and not args.output_dir:
     assert os.path.exists(args.eval_model_path), 'One of args.model_dir and args.eval_model_path should be valid path'

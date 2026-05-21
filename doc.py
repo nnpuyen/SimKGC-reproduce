@@ -8,7 +8,7 @@ from typing import Optional, List
 from config import args
 from triplet import reverse_triplet
 from triplet_mask import construct_mask, construct_self_negative_mask
-from dict_hub import get_entity_dict, get_link_graph, get_tokenizer
+from dict_hub import get_entity_dict, get_link_graph, get_tokenizer, get_relation2idx
 from logger_config import logger
 
 entity_dict = get_entity_dict()
@@ -85,6 +85,21 @@ class Example:
         return entity_dict.get_entity_by_id(self.tail_id).entity
 
     def vectorize(self) -> dict:
+        if args.use_mf:
+            relation2idx = get_relation2idx()
+            head_idx = entity_dict.entity_to_idx(self.head_id) if self.head_id else 0
+            tail_idx = entity_dict.entity_to_idx(self.tail_id) if self.tail_id else 0
+            relation_idx = relation2idx.get(self.relation, 0)
+            out = {
+                'head_id': head_idx,
+                'relation_id': relation_idx,
+                'tail_id': tail_idx,
+                'obj': self,
+            }
+            if self.label is not None:
+                out['label'] = self.label
+            return out
+
         head_desc, tail_desc = self.head_desc, self.tail_desc
         if args.use_link_graph:
             if len(head_desc.split()) < 20:
@@ -190,6 +205,21 @@ def load_data(path: str,
 
 
 def collate(batch_data: List[dict]) -> dict:
+    if args.use_mf:
+        head_ids = torch.LongTensor([ex['head_id'] for ex in batch_data])
+        relation_ids = torch.LongTensor([ex['relation_id'] for ex in batch_data])
+        tail_ids = torch.LongTensor([ex['tail_id'] for ex in batch_data])
+        batch_exs = [ex['obj'] for ex in batch_data]
+        batch_dict = {
+            'head_ids': head_ids,
+            'relation_ids': relation_ids,
+            'tail_ids': tail_ids,
+            'batch_data': batch_exs,
+            'triplet_mask': construct_mask(row_exs=batch_exs) if not args.is_test else None,
+            'self_negative_mask': construct_self_negative_mask(batch_exs) if not args.is_test else None,
+        }
+        return batch_dict
+
     hr_token_ids, hr_mask = to_indices_and_mask(
         [torch.LongTensor(ex['hr_token_ids']) for ex in batch_data],
         pad_token_id=get_tokenizer().pad_token_id)
