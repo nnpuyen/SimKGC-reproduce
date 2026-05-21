@@ -19,7 +19,7 @@ from doc import Dataset, collate
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj, call_model_forward
 from metric import accuracy
-from models import build_model, ModelOutput, DirectAULoss, BridgedLoss
+from models import build_model, ModelOutput, DirectAULoss
 from dict_hub import build_tokenizer, get_entity_dict
 from logger_config import logger
 import os 
@@ -60,14 +60,14 @@ class Trainer:
         
         self.infonce_loss = nn.CrossEntropyLoss().cuda()
         
-        if self.use_bridge_loss:
-            self.auxiliary_loss = BridgedLoss(
-                alpha=getattr(self.args, 'bridge_alpha', 1.0),
-                gamma=getattr(self.args, 'bridge_gamma', 1.0),
-                beta=getattr(self.args, 'bridge_beta', 1.0),
-                eps=getattr(self.args, 'directau_eps', 1e-12),
-            ).cuda()
-        elif self.use_alignment_loss or self.use_uniformity_loss:
+        # if self.use_bridge_loss:
+            # self.auxiliary_loss = BridgedLoss(
+            #     alpha=getattr(self.args, 'bridge_alpha', 1.0),
+            #     gamma=getattr(self.args, 'bridge_gamma', 1.0),
+            #     beta=getattr(self.args, 'bridge_beta', 1.0),
+            #     eps=getattr(self.args, 'directau_eps', 1e-12),
+            # ).cuda()
+        if self.use_alignment_loss or self.use_uniformity_loss:
             self.auxiliary_loss = DirectAULoss(
                 alpha=getattr(self.args, 'directau_alpha', 1.0),
                 gamma=getattr(self.args, 'directau_gamma', 1.0),

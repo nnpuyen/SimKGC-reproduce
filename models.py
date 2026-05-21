@@ -70,7 +70,7 @@ class DirectAULoss(nn.Module):
         pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
         pairwise_dists = pairwise_dists[pairwise_mask]
 
-        exp_term = torch.exp(-4 * pairwise_dists ** 2)
+        exp_term = torch.exp(-5 * pairwise_dists ** 2)
         mean_exp = torch.mean(exp_term)
 
         uniform_loss = torch.log(mean_exp + self.eps)
@@ -116,78 +116,78 @@ class DirectAULoss(nn.Module):
         return total_uniform_loss
 
 
-class BridgedLoss(nn.Module):
-    """Alignment + cross-uniformity loss (negatives only) for bridged objective."""
+# class BridgedLoss(nn.Module):
+#     """Alignment + cross-uniformity loss (negatives only) for bridged objective."""
 
-    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, beta: float = 1.0, eps: float = 1e-12):
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.beta = beta
-        self.eps = eps
+#     def __init__(self, alpha: float = 1.0, gamma: float = 1.0, beta: float = 1.0, eps: float = 1e-12):
+#         super().__init__()
+#         self.alpha = alpha
+#         self.gamma = gamma
+#         self.beta = beta
+#         self.eps = eps
 
-    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
-                triplet_mask: torch.tensor = None) -> dict:
-        """
-        Compute bridged loss: alignment + cross-uniformity.
+#     def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+#                 triplet_mask: torch.tensor = None) -> dict:
+#         """
+#         Compute bridged loss: alignment + cross-uniformity.
 
-        Args:
-            hr_vector: query vectors (batch_size, dim), normalized
-            tail_vector: tail entity vectors (batch_size, dim), normalized
-            triplet_mask: optional mask for valid negatives (batch_size, batch_size)
+#         Args:
+#             hr_vector: query vectors (batch_size, dim), normalized
+#             tail_vector: tail entity vectors (batch_size, dim), normalized
+#             triplet_mask: optional mask for valid negatives (batch_size, batch_size)
 
-        Returns:
-            dict with 'loss', 'align_loss', 'uniform_loss'
-        """
-        align_loss = self._compute_align_loss(hr_vector, tail_vector)
-        cross_uniform = self._compute_cross_uniformity(hr_vector, tail_vector, triplet_mask=triplet_mask)
+#         Returns:
+#             dict with 'loss', 'align_loss', 'uniform_loss'
+#         """
+#         align_loss = self._compute_align_loss(hr_vector, tail_vector)
+#         cross_uniform = self._compute_cross_uniformity(hr_vector, tail_vector, triplet_mask=triplet_mask)
 
-        scaled_align = self.alpha * align_loss
-        scaled_uniform = self.gamma * cross_uniform
-        total_loss = scaled_align + scaled_uniform
+#         scaled_align = self.alpha * align_loss
+#         scaled_uniform = self.gamma * cross_uniform
+#         total_loss = scaled_align + scaled_uniform
 
-        return {
-            'loss': total_loss,
-            'align_loss': align_loss.detach(),
-            'align_loss_scaled': scaled_align.detach(),
-            'uniform_loss': cross_uniform.detach(),
-            'uniform_loss_scaled': scaled_uniform.detach(),
-        }
+#         return {
+#             'loss': total_loss,
+#             'align_loss': align_loss.detach(),
+#             'align_loss_scaled': scaled_align.detach(),
+#             'uniform_loss': cross_uniform.detach(),
+#             'uniform_loss_scaled': scaled_uniform.detach(),
+#         }
 
-    def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
-        squared_l2_dist = torch.sum((hr_vector - tail_vector) ** 2, dim=-1)
-        return torch.mean(squared_l2_dist)
+#     def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
+#         squared_l2_dist = torch.sum((hr_vector - tail_vector) ** 2, dim=-1)
+#         return torch.mean(squared_l2_dist)
 
-    def _compute_cross_uniformity(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
-                                  triplet_mask: torch.tensor = None) -> torch.tensor:
-        if hr_vector.size(0) == 0:
-            return torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+#     def _compute_cross_uniformity(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+#                                   triplet_mask: torch.tensor = None) -> torch.tensor:
+#         if hr_vector.size(0) == 0:
+#             return torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
 
-        dist = torch.cdist(hr_vector, tail_vector, p=2)
-        dist2 = dist ** 2
+#         dist = torch.cdist(hr_vector, tail_vector, p=2)
+#         dist2 = dist ** 2
 
-        if triplet_mask is not None:
-            mask = triplet_mask.to(hr_vector.device)
-            if mask.dtype != torch.bool:
-                mask = mask.bool()
-            mask = mask.clone()
-            if mask.shape == dist2.shape:
-                mask.fill_diagonal_(False)
-            else:
-                mask = None
-        else:
-            mask = None
+#         if triplet_mask is not None:
+#             mask = triplet_mask.to(hr_vector.device)
+#             if mask.dtype != torch.bool:
+#                 mask = mask.bool()
+#             mask = mask.clone()
+#             if mask.shape == dist2.shape:
+#                 mask.fill_diagonal_(False)
+#             else:
+#                 mask = None
+#         else:
+#             mask = None
 
-        if mask is None:
-            mask = torch.ones_like(dist2, dtype=torch.bool, device=hr_vector.device)
-            mask.fill_diagonal_(False)
+#         if mask is None:
+#             mask = torch.ones_like(dist2, dtype=torch.bool, device=hr_vector.device)
+#             mask.fill_diagonal_(False)
 
-        neg_scores = (-self.beta * dist2).masked_fill(~mask, float('-inf'))
-        logsumexp = torch.logsumexp(neg_scores, dim=1)
-        num_neg = mask.sum(dim=1).clamp(min=1)
-        logmeanexp = logsumexp - torch.log(num_neg.to(dist2.dtype))
-        logmeanexp = torch.where(torch.isfinite(logmeanexp), logmeanexp, torch.zeros_like(logmeanexp))
-        return torch.mean(logmeanexp)
+#         neg_scores = (-self.beta * dist2).masked_fill(~mask, float('-inf'))
+#         logsumexp = torch.logsumexp(neg_scores, dim=1)
+#         num_neg = mask.sum(dim=1).clamp(min=1)
+#         logmeanexp = logsumexp - torch.log(num_neg.to(dist2.dtype))
+#         logmeanexp = torch.where(torch.isfinite(logmeanexp), logmeanexp, torch.zeros_like(logmeanexp))
+#         return torch.mean(logmeanexp)
 
 
 def build_model(args) -> nn.Module:
