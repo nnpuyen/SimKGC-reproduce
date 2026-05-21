@@ -47,6 +47,8 @@ parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
 parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
                     help='epsilon used by DirectAU normalization helpers')
+parser.add_argument('--uniformity-t', default=3.0, type=float, metavar='N',
+                    help='temperature for DirectAU uniformity term')
 parser.add_argument('--bridge-alpha', default=1.0, type=float, metavar='N',
                     help='weight for bridged alignment term')
 parser.add_argument('--bridge-gamma', default=1.0, type=float, metavar='N',
@@ -152,6 +154,7 @@ if args.bridge_beta is None:
 assert args.directau_gamma >= 0
 assert args.directau_alpha >= 0
 assert args.directau_eps > 0
+assert args.uniformity_t > 0
 assert args.bridge_alpha >= 0
 assert args.bridge_gamma >= 0
 assert args.bridge_beta > 0

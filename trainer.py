@@ -72,6 +72,7 @@ class Trainer:
                 alpha=getattr(self.args, 'directau_alpha', 1.0),
                 gamma=getattr(self.args, 'directau_gamma', 1.0),
                 eps=getattr(self.args, 'directau_eps', 1e-12),
+                uniformity_t=getattr(self.args, 'uniformity_t', 3.0),
                 use_alignment=self.use_alignment_loss,
                 use_uniformity=self.use_uniformity_loss,
             ).cuda()

@@ -14,13 +14,15 @@ from triplet_mask import construct_mask
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
-    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12, use_alignment: bool = True, use_uniformity: bool = True):
+    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12,
+                 use_alignment: bool = True, use_uniformity: bool = True, uniformity_t: float = 3.0):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.eps = eps
         self.use_alignment = use_alignment
         self.use_uniformity = use_uniformity
+        self.uniformity_t = uniformity_t
     
     def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
                 labels: torch.tensor = None, batch_exs: list = None) -> dict:
@@ -60,17 +62,14 @@ class DirectAULoss(nn.Module):
     
     def _compute_uniform_loss_for_vectors(self, vectors: torch.tensor) -> torch.tensor:
         """
-        Uniformity loss for a single set of vectors: log of mean(exp(-2 * pairwise_distances)).
+        Uniformity loss for a single set of vectors: log of mean(exp(-t * pairwise_distances^2)).
         Assumes the input vectors have already been deduplicated or pooled upstream.
         """
         if vectors.size(0) < 2:
             return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
 
         pairwise_dists = torch.cdist(vectors, vectors, p=2)
-        pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
-        pairwise_dists = pairwise_dists[pairwise_mask]
-
-        exp_term = torch.exp(-3 * pairwise_dists ** 2)
+        exp_term = torch.exp(-self.uniformity_t * pairwise_dists ** 2)
         mean_exp = torch.mean(exp_term)
 
         uniform_loss = torch.log(mean_exp + self.eps)
@@ -112,7 +111,7 @@ class DirectAULoss(nn.Module):
             hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_vector)
             tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector)
 
-        total_uniform_loss = hr_uniform_loss + tail_uniform_loss
+        total_uniform_loss = (hr_uniform_loss + tail_uniform_loss) / 2.0
         return total_uniform_loss
 
 

@@ -23,6 +23,7 @@ python main.py \
     --directau \
     --directau-gamma 1.0 \
     --directau-eps 1e-12 \
+    --uniformity-t 3 \
     --chunk-size 8192 \
     --eval-every-n-step 10000
 
@@ -36,6 +37,7 @@ python evaluate.py \
     --eval-model-path ${OUTPUT_DIR}/checkpoint_best.mdl \
     --output-dir ${OUTPUT_DIR} \
     --directau \
+    --uniformity-t 3 \
     --chunk-size 8192
 
 # Comparison: Training without DirectAU (baseline SimKGC)
