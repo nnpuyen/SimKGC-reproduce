@@ -48,6 +48,7 @@ python3 -u main.py \
 --use-uniformity-loss \
 --directau-gamma 1.0 \
 --directau-alpha 1.0 \
+--directau-uniformity-scale 4 \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"

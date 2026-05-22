@@ -31,6 +31,7 @@ python3 -u main.py \
 --use-self-negative \
 --finetune-t \
 --pre-batch 2 \
+--directau-uniformity-scale 4 \
 --epochs 10 \
 --workers 4 \
 --max-to-keep 5 "$@"

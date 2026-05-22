@@ -38,6 +38,7 @@ python3 -u main.py \
 --bridge-gamma 1.0 \
 --bridge-beta 10.0 \
 --directau-eps 1e-12 \
+--directau-uniformity-scale 4 \
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \

@@ -48,6 +48,7 @@ python3 -u main.py \
 --directau-alpha 3.0 \
 --directau-gamma 1.0 \
 --directau-eps 1e-12 \
+--directau-uniformity-scale 4 \
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \

@@ -46,6 +46,7 @@ python3 -u main.py \
 --loss-type infonce \
 --use-negative-sampling \
 --epochs 50 \
+--directau-uniformity-scale 4 \
 --workers 2 \
 --max-to-keep 3 "$@"
 
