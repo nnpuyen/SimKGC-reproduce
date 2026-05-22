@@ -46,7 +46,7 @@ python3 -u main.py \
 --loss-type alignment \
 --use-uniformity-loss \
 --directau-alpha 3.0 \
---directau-gamma 1.0 \
+--directau-gamma 1.5 \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4 \
 --no-negative-sampling \
