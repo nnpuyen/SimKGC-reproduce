@@ -72,6 +72,7 @@ class Trainer:
                 alpha=getattr(self.args, 'directau_alpha', 1.0),
                 gamma=getattr(self.args, 'directau_gamma', 1.0),
                 eps=getattr(self.args, 'directau_eps', 1e-12),
+                uniformity_scale=getattr(self.args, 'directau_uniformity_scale', 4.0),
                 use_alignment=self.use_alignment_loss,
                 use_uniformity=self.use_uniformity_loss,
             ).cuda()
@@ -94,6 +95,7 @@ class Trainer:
         logger.info('Total training steps: {}, warmup steps: {}'.format(num_training_steps, args.warmup))
         self.scheduler = self._create_lr_scheduler(num_training_steps)
         self.best_metric = None
+        self.early_stop_wait = 0
 
         self.train_loader = torch.utils.data.DataLoader(
             train_dataset,
@@ -170,8 +172,30 @@ class Trainer:
             train_time += time.time() - epoch_train_start
 
             val_start = time.time()
-            self._run_eval(epoch=epoch)
+            eval_result = self._run_eval(epoch=epoch)
             val_time = time.time() - val_start
+
+            valid_mrr = None
+            is_best = False
+            if isinstance(eval_result, dict):
+                valid_mrr = eval_result.get('valid_mrr')
+                is_best = bool(eval_result.get('is_best', False))
+
+            if getattr(self.args, 'early_stop', False) and valid_mrr is not None:
+                if is_best:
+                    self.early_stop_wait = 0
+                else:
+                    self.early_stop_wait += 1
+                    logger.info(
+                        f"Early stopping wait: {self.early_stop_wait}/"
+                        f"{self.args.early_stop_patience} (valid_mrr={valid_mrr})"
+                    )
+                if self.early_stop_wait >= self.args.early_stop_patience:
+                    logger.info(
+                        f"Early stopping triggered at epoch {epoch} with best MRR="
+                        f"{self.best_metric.get('mrr', None) if self.best_metric else None}"
+                    )
+                    break
 
             # Evaluate MR, MRR, Hits@1/3/10 on valid set using current training model (no second model loaded)
             if self.args.valid_path and self.args.model_dir:
@@ -390,7 +414,10 @@ class Trainer:
                 except Exception:
                     valid_mrr = None
 
-        is_best = (valid_mrr is not None) and (self.best_metric is None or valid_mrr > self.best_metric.get('mrr', -1))
+        min_delta = float(getattr(self.args, 'early_stop_min_delta', 0.0))
+        is_best = (valid_mrr is not None) and (
+            self.best_metric is None or valid_mrr > (self.best_metric.get('mrr', -1) + min_delta)
+        )
         if is_best:
             self.best_metric = {'mrr': valid_mrr}
 
@@ -404,6 +431,12 @@ class Trainer:
         }, is_best=is_best, filename=filename)
         delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.model_dir),
                        keep=self.args.max_to_keep)
+
+        return {
+            'metric_dict': metric_dict,
+            'valid_mrr': valid_mrr,
+            'is_best': is_best,
+        }
 
     @torch.no_grad()
     def eval_epoch(self, epoch) -> Dict:

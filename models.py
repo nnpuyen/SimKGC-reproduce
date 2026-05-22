@@ -15,11 +15,13 @@ from dict_hub import get_entity_dict, get_relation2idx
 class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
-    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12, use_alignment: bool = True, use_uniformity: bool = True):
+    def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12,
+                 uniformity_scale: float = 4.0, use_alignment: bool = True, use_uniformity: bool = True):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.eps = eps
+        self.uniformity_scale = uniformity_scale
         self.use_alignment = use_alignment
         self.use_uniformity = use_uniformity
     
@@ -71,7 +73,7 @@ class DirectAULoss(nn.Module):
         pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
         pairwise_dists = pairwise_dists[pairwise_mask]
 
-        exp_term = torch.exp(-3 * pairwise_dists ** 2)
+        exp_term = torch.exp(-self.uniformity_scale * pairwise_dists ** 2)
         mean_exp = torch.mean(exp_term)
 
         uniform_loss = torch.log(mean_exp + self.eps)

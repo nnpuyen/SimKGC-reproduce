@@ -59,6 +59,8 @@ parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
 parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
                     help='epsilon used by DirectAU normalization helpers')
+parser.add_argument('--directau-uniformity-scale', default=4.0, type=float, metavar='N',
+                    help='scale factor for DirectAU uniformity exp term')
 parser.add_argument('--bridge-alpha', default=1.0, type=float, metavar='N',
                     help='weight for bridged alignment term')
 parser.add_argument('--bridge-gamma', default=1.0, type=float, metavar='N',
@@ -120,6 +122,14 @@ parser.add_argument('--neighbor-weight', default=0.0, type=float,
                     help='weight for re-ranking entities')
 parser.add_argument('--eval-model-path', default='', type=str, metavar='N',
                     help='path to model, only used for evaluation')
+parser.add_argument('--early-stop', action='store_true', default=True,
+                    help='enable early stopping based on valid MRR (default: on)')
+parser.add_argument('--no-early-stop', dest='early_stop', action='store_false',
+                    help='disable early stopping')
+parser.add_argument('--early-stop-patience', default=5, type=int, metavar='N',
+                    help='number of epochs without MRR improvement before stopping')
+parser.add_argument('--early-stop-min-delta', default=0.0, type=float, metavar='N',
+                    help='minimum MRR improvement to reset early stopping')
 
 args = parser.parse_args()
 
