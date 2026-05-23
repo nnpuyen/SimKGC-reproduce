@@ -59,7 +59,7 @@ parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
 parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
                     help='epsilon used by DirectAU normalization helpers')
-parser.add_argument('--directau-uniformity-scale', default=4.0, type=float, metavar='N',
+parser.add_argument('--directau-uniformity-scale', default=2.0, type=float, metavar='N',
                     help='scale factor for DirectAU uniformity exp term')
 parser.add_argument('--bridge-alpha', default=1.0, type=float, metavar='N',
                     help='weight for bridged alignment term')

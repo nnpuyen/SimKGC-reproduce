@@ -47,6 +47,7 @@ python3 -u main.py \
 --use-negative-sampling \
 --use-uniformity-loss \
 --directau-gamma 0.1 \
+--directau-uniformity-scale 2 \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"

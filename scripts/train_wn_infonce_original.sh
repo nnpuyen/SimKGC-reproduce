@@ -45,6 +45,7 @@ python3 -u main.py \
 --finetune-t \
 --loss-type infonce \
 --use-negative-sampling \
+--directau-uniformity-scale 2 \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"
@@ -69,4 +70,5 @@ python3 -u evaluate.py \
 --neighbor-weight "${neighbor_weight}" \
 --rerank-n-hop "${rerank_n_hop}" \
 --train-path "${DATA_DIR}/train.txt.json" \
---valid-path "${test_path}"
+--valid-path "${test_path}" \
+--directau-uniformity-scale 2

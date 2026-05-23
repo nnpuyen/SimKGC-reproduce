@@ -33,4 +33,5 @@ python3 -u main.py \
 --pre-batch 2 \
 --epochs 10 \
 --workers 4 \
---max-to-keep 5 "$@"
+--max-to-keep 5 \
+--directau-uniformity-scale 2 "$@"

@@ -34,4 +34,5 @@ python3 -u main.py \
 --finetune-t \
 --epochs 50 \
 --workers 2 \
---max-to-keep 3 "$@"
+--max-to-keep 3 \
+--directau-uniformity-scale 2 "$@"

@@ -55,4 +55,5 @@ python3 -u eval_wiki5m_trans.py \
 --eval-model-path "${model_path}" \
 --neighbor-weight "${neighbor_weight}" \
 --train-path "$DATA_DIR/train.txt.json" \
---valid-path "${test_path}" "$@"
+--valid-path "${test_path}" \
+--directau-uniformity-scale 2 "$@"

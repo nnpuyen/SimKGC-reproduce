@@ -39,6 +39,7 @@ python3 -u main.py \
 --bridge-beta 2.0 \
 --bridge-gamma-warmup-epochs 5 \
 --directau-eps 1e-12 \
+--directau-uniformity-scale 2 \
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \

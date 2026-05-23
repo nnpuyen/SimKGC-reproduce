@@ -35,6 +35,7 @@ python3 -u main.py \
 --directau-alpha 3.0 \
 --directau-gamma 1.0 \
 --directau-eps 1e-12 \
+--directau-uniformity-scale 2 \
 --no-negative-sampling \
 --use-mf \
 --mf-dim 256 \

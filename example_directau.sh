@@ -23,6 +23,7 @@ python main.py \
     --directau \
     --directau-gamma 1.0 \
     --directau-eps 1e-12 \
+    --directau-uniformity-scale 2 \
     --chunk-size 8192 \
     --eval-every-n-step 10000
 
@@ -36,6 +37,7 @@ python evaluate.py \
     --eval-model-path ${OUTPUT_DIR}/checkpoint_best.mdl \
     --output-dir ${OUTPUT_DIR} \
     --directau \
+    --directau-uniformity-scale 2 \
     --chunk-size 8192
 
 # Comparison: Training without DirectAU (baseline SimKGC)
@@ -49,7 +51,8 @@ python main.py \
     --output-dir ./output_simkgc \
     --batch-size 64 \
     --epochs 10 \
-    --lr 2e-5
+    --lr 2e-5 \
+    --directau-uniformity-scale 2
 
 # Evaluation without DirectAU (baseline)
 echo "=== Evaluation without DirectAU (baseline) ==="
@@ -59,4 +62,5 @@ python evaluate.py \
     --valid-path ${VALID_PATH} \
     --train-path ${TRAIN_PATH} \
     --eval-model-path ./output_simkgc/checkpoint_best.mdl \
-    --output-dir ./output_simkgc
+    --output-dir ./output_simkgc \
+    --directau-uniformity-scale 2
