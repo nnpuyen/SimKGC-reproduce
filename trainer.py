@@ -211,16 +211,14 @@ class Trainer:
                     self.evaluate_triple_classification_inplace(self.model, test_label_path, log_path)
 
                 if self.args.valid_path:
-                    if self.args.valid_path.endswith('_w_label.txt'):
-                        test_eval_path = self.args.valid_path.replace('valid_w_label.txt', 'test_w_label.txt')
-                    elif self.args.valid_path.endswith('.txt.json'):
-                        test_eval_path = self.args.valid_path.replace('valid.txt.json', 'test.txt.json')
-                    elif self.args.valid_path.endswith('.txt'):
-                        test_eval_path = self.args.valid_path.replace('valid.txt', 'test.txt')
-                    else:
-                        test_eval_path = None
+                    data_dir = os.path.dirname(self.args.valid_path)
+                    test_eval_path = os.path.join(data_dir, 'test.txt.json')
+                    if not os.path.exists(test_eval_path):
+                        test_eval_path = os.path.join(data_dir, 'test.txt')
                 else:
-                    test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
+                    test_eval_path = os.path.join('data', 'WN18RR', 'test.txt.json')
+                    if not os.path.exists(test_eval_path):
+                        test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
                 if test_eval_path and os.path.exists(test_eval_path):
                     test_entity_dict = get_entity_dict()
                     test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
@@ -255,16 +253,14 @@ class Trainer:
         # Nếu valid_path là _w_label.txt, lấy test_w_label.txt (từ đó chỉ lấy label=1 cho link prediction)
         # Nếu valid_path là .txt hoặc .json, lấy test.txt hoặc test.txt.json
         if self.args.valid_path:
-            if self.args.valid_path.endswith('_w_label.txt'):
-                test_eval_path = self.args.valid_path.replace('valid_w_label.txt', 'test_w_label.txt')
-            elif self.args.valid_path.endswith('.txt.json'):
-                test_eval_path = self.args.valid_path.replace('valid.txt.json', 'test.txt.json')
-            elif self.args.valid_path.endswith('.txt'):
-                test_eval_path = self.args.valid_path.replace('valid.txt', 'test.txt')
-            else:
-                test_eval_path = None
+            data_dir = os.path.dirname(self.args.valid_path)
+            test_eval_path = os.path.join(data_dir, 'test.txt.json')
+            if not os.path.exists(test_eval_path):
+                test_eval_path = os.path.join(data_dir, 'test.txt')
         else:
-            test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
+            test_eval_path = os.path.join('data', 'WN18RR', 'test.txt.json')
+            if not os.path.exists(test_eval_path):
+                test_eval_path = os.path.join('data', 'WN18RR', 'test.txt')
         if test_eval_path and os.path.exists(test_eval_path):
             test_entity_dict = get_entity_dict()
             test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
@@ -591,6 +587,17 @@ class Trainer:
         if not os.path.exists(eval_path):
             print(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
             return
+        logger.info(
+            '[INPLACE EVAL] task=%s is_test=%s use_link_graph=%s train_path=%s valid_path=%s eval_path=%s entity_count=%s eval_forward=%s',
+            self.args.task,
+            self.args.is_test,
+            self.args.use_link_graph,
+            self.args.train_path,
+            self.args.valid_path,
+            eval_path,
+            len(entity_dict),
+            eval_forward,
+        )
         eval_set = 'TEST' if 'test' in eval_path else 'VALID'
         print(f"\n[{eval_set}] Evaluating link prediction inplace on {eval_path} ...")
         examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)

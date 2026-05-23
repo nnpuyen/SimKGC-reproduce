@@ -45,10 +45,12 @@ if [ -z "$DATA_DIR" ]; then
   DATA_DIR="${DIR}/data/${task}"
 fi
 
-test_path="${DATA_DIR}/test_w_label.txt.json"
+test_path="${DATA_DIR}/test.txt.json"
 if [ ! -f "${test_path}" ]; then
-  test_path="${DATA_DIR}/test_w_label.txt"
+  test_path="${DATA_DIR}/test.txt"
 fi
+
+echo "eval.sh config: task=${task} model_path=${model_path} DATA_DIR=${DATA_DIR} test_path=${test_path} train_path=${DATA_DIR}/train.txt.json"
 
 # neighbor_weight=0.05
 # rerank_n_hop=2

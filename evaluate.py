@@ -146,6 +146,17 @@ def predict_by_split():
     assert os.path.exists(args.valid_path)
     assert os.path.exists(args.train_path)
 
+    logger.info(
+        'Eval config: task=%s is_test=%s use_link_graph=%s train_path=%s valid_path=%s eval_model_path=%s entity_count=%s',
+        args.task,
+        args.is_test,
+        args.use_link_graph,
+        args.train_path,
+        args.valid_path,
+        args.eval_model_path,
+        len(entity_dict),
+    )
+
     predictor = BertPredictor()
     predictor.load(ckt_path=args.eval_model_path)
     entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs)
@@ -158,6 +169,8 @@ def predict_by_split():
         if os.path.exists(test_unlabeled_path):
             linkpred_eval_path = test_unlabeled_path
             logger.info(f'Using unlabeled test file for link prediction: {test_unlabeled_path}')
+        else:
+            logger.info('Using labeled test file for link prediction: %s', args.valid_path)
 
     forward_metrics = eval_single_direction(predictor,
                                             entity_tensor=entity_tensor,
