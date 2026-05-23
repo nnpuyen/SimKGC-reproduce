@@ -95,6 +95,7 @@ class Trainer:
         logger.info('Total training steps: {}, warmup steps: {}'.format(num_training_steps, args.warmup))
         self.scheduler = self._create_lr_scheduler(num_training_steps)
         self.best_metric = None
+        self.best_epoch = None
         self.early_stop_wait = 0
 
         self.train_loader = torch.utils.data.DataLoader(
@@ -325,6 +326,14 @@ class Trainer:
         print(f"[Timing] Total run time (s): {round(total_time, 2)}")
         logger.info(f"[Timing] Training time (s): {round(train_time, 2)}")
         logger.info(f"[Timing] Total run time (s): {round(total_time, 2)}")
+        if self.best_metric is not None and self.best_epoch is not None:
+            best_summary = f"[BEST] epoch={self.best_epoch} valid_mrr={self.best_metric.get('mrr', None)}"
+            print(best_summary)
+            logger.info(best_summary)
+            if self.args.model_dir:
+                best_log_path = os.path.join(self.args.model_dir, 'best_metrics.log')
+                with open(best_log_path, 'a', encoding='utf-8') as f:
+                    f.write(best_summary + '\n')
 
     def _run_test_evaluation(self, epoch):
         test_results = {}
@@ -420,6 +429,14 @@ class Trainer:
         )
         if is_best:
             self.best_metric = {'mrr': valid_mrr}
+            self.best_epoch = epoch
+            best_log = f"[BEST] epoch={epoch} valid_mrr={valid_mrr}"
+            print(best_log)
+            logger.info(best_log)
+            if self.args.model_dir:
+                best_log_path = os.path.join(self.args.model_dir, 'best_metrics.log')
+                with open(best_log_path, 'a', encoding='utf-8') as f:
+                    f.write(best_log + '\n')
 
         filename = '{}/checkpoint_{}_{}.mdl'.format(self.args.model_dir, epoch, step)
         if step == 0:
