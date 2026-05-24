@@ -118,6 +118,96 @@ class DirectAULoss(nn.Module):
         return total_uniform_loss
 
 
+class StaticHybridDirectAULoss(nn.Module):
+    """Alignment plus two static uniformity terms with separate scales and weights."""
+
+    def __init__(self, alpha: float = 1.0, gamma1: float = 0.5, gamma2: float = 0.5,
+                 eps: float = 1e-12, uniformity_scale1: float = 4.0, uniformity_scale2: float = 6.0,
+                 use_alignment: bool = True, use_uniformity: bool = True):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma1 = gamma1
+        self.gamma2 = gamma2
+        self.eps = eps
+        self.uniformity_scale1 = uniformity_scale1
+        self.uniformity_scale2 = uniformity_scale2
+        self.use_alignment = use_alignment
+        self.use_uniformity = use_uniformity
+
+    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                labels: torch.tensor = None, batch_exs: list = None) -> dict:
+        align_loss = self._compute_align_loss(hr_vector, tail_vector) if self.use_alignment else torch.tensor(0.0, device=hr_vector.device)
+
+        if self.use_uniformity:
+            uniform_loss_1 = self._compute_uniform_loss(hr_vector, tail_vector, batch_exs, self.uniformity_scale1)
+            uniform_loss_2 = self._compute_uniform_loss(hr_vector, tail_vector, batch_exs, self.uniformity_scale2)
+        else:
+            uniform_loss_1 = torch.tensor(0.0, device=hr_vector.device)
+            uniform_loss_2 = torch.tensor(0.0, device=hr_vector.device)
+
+        scaled_align = self.alpha * align_loss
+        scaled_uniform_1 = self.gamma1 * uniform_loss_1
+        scaled_uniform_2 = self.gamma2 * uniform_loss_2
+        total_loss = scaled_align + scaled_uniform_1 + scaled_uniform_2
+
+        return {
+            'loss': total_loss,
+            'align_loss': align_loss.detach(),
+            'align_loss_scaled': scaled_align.detach(),
+            'uniform_loss': (uniform_loss_1 + uniform_loss_2).detach(),
+            'uniform_loss_scaled': (scaled_uniform_1 + scaled_uniform_2).detach(),
+            'uniform_loss_1': uniform_loss_1.detach(),
+            'uniform_loss_2': uniform_loss_2.detach(),
+            'uniform_loss_1_scaled': scaled_uniform_1.detach(),
+            'uniform_loss_2_scaled': scaled_uniform_2.detach(),
+        }
+
+    def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
+        squared_l2_dist = torch.sum((hr_vector - tail_vector) ** 2, dim=-1)
+        return torch.mean(squared_l2_dist)
+
+    def _compute_uniform_loss_for_vectors(self, vectors: torch.tensor, scale: float) -> torch.tensor:
+        if vectors.size(0) < 2:
+            return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
+
+        pairwise_dists = torch.cdist(vectors, vectors, p=2)
+        pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
+        pairwise_dists = pairwise_dists[pairwise_mask]
+
+        exp_term = torch.exp(-scale * pairwise_dists ** 2)
+        mean_exp = torch.mean(exp_term)
+        return torch.log(mean_exp + self.eps)
+
+    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                              batch_exs: list, scale: float) -> torch.tensor:
+        if batch_exs is not None:
+            query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
+            tail_ids = [ex.tail_id for ex in batch_exs]
+
+            def unique_indices_by_id(ids):
+                seen = set()
+                uniq_idx = []
+                for i, idv in enumerate(ids):
+                    if idv not in seen:
+                        seen.add(idv)
+                        uniq_idx.append(i)
+                return torch.tensor(uniq_idx, dtype=torch.long, device=hr_vector.device)
+
+            hr_idx = unique_indices_by_id(query_keys)
+            tail_idx = unique_indices_by_id(tail_ids)
+
+            hr_unique = hr_vector[hr_idx]
+            tail_unique = tail_vector[tail_idx]
+
+            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_unique, scale)
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique, scale)
+        else:
+            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_vector, scale)
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector, scale)
+
+        return hr_uniform_loss + tail_uniform_loss
+
+
 # class BridgedLoss(nn.Module):
 #     """Alignment + cross-uniformity loss (negatives only) for bridged objective."""
 

@@ -20,7 +20,7 @@ from doc import Dataset, collate
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj, call_model_forward
 from metric import accuracy
-from models import build_model, ModelOutput, DirectAULoss
+from models import build_model, ModelOutput, DirectAULoss, StaticHybridDirectAULoss
 from dict_hub import build_tokenizer, get_entity_dict
 from logger_config import logger
 import os 
@@ -47,12 +47,16 @@ class Trainer:
         self.use_infonce_loss = (loss_type in ['infonce', 'all'])
         self.use_alignment_loss = (loss_type in ['alignment', 'all'])
         self.use_bridge_loss = (loss_type == 'bridge')
+        self.use_static_hybrid = bool(getattr(self.args, 'static_hybrid', False))
         if loss_type == 'all':
             self.use_uniformity_loss = True
         if self.use_bridge_loss:
             self.use_uniformity_loss = False
             self.bridge_gamma_base = float(getattr(self.args, 'bridge_gamma', 1.0))
             self.bridge_gamma_warmup_epochs = int(getattr(self.args, 'bridge_gamma_warmup_epochs', 0))
+        if self.use_static_hybrid:
+            self.use_uniformity_loss = True
+            self.use_alignment_loss = True
         
         # Disable negative sampling flags when use_negative_sampling is False
         if not self.use_negative_sampling:
@@ -69,14 +73,26 @@ class Trainer:
             #     eps=getattr(self.args, 'directau_eps', 1e-12),
             # ).cuda()
         if self.use_alignment_loss or self.use_uniformity_loss:
-            self.auxiliary_loss = DirectAULoss(
-                alpha=getattr(self.args, 'directau_alpha', 1.0),
-                gamma=getattr(self.args, 'directau_gamma', 1.0),
-                eps=getattr(self.args, 'directau_eps', 1e-12),
-                uniformity_scale=getattr(self.args, 'directau_uniformity_scale', 4.0),
-                use_alignment=self.use_alignment_loss,
-                use_uniformity=self.use_uniformity_loss,
-            ).cuda()
+            if self.use_static_hybrid:
+                self.auxiliary_loss = StaticHybridDirectAULoss(
+                    alpha=getattr(self.args, 'directau_alpha', 1.0),
+                    gamma1=getattr(self.args, 'directau_gamma_1', 0.5),
+                    gamma2=getattr(self.args, 'directau_gamma_2', 0.5),
+                    eps=getattr(self.args, 'directau_eps', 1e-12),
+                    uniformity_scale1=getattr(self.args, 'directau_uniformity_scale_1', 4.0),
+                    uniformity_scale2=getattr(self.args, 'directau_uniformity_scale_2', 6.0),
+                    use_alignment=self.use_alignment_loss,
+                    use_uniformity=self.use_uniformity_loss,
+                ).cuda()
+            else:
+                self.auxiliary_loss = DirectAULoss(
+                    alpha=getattr(self.args, 'directau_alpha', 1.0),
+                    gamma=getattr(self.args, 'directau_gamma', 1.0),
+                    eps=getattr(self.args, 'directau_eps', 1e-12),
+                    uniformity_scale=getattr(self.args, 'directau_uniformity_scale', 4.0),
+                    use_alignment=self.use_alignment_loss,
+                    use_uniformity=self.use_uniformity_loss,
+                ).cuda()
         else:
             self.auxiliary_loss = None
 

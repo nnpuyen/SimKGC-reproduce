@@ -45,14 +45,24 @@ parser.add_argument('--use-uniformity-loss', action='store_true', default=False,
                     help='enable uniformity regularization term')
 parser.add_argument('--directau', action='store_true',
                     help='compatibility alias: sets --loss-type alignment --use-uniformity-loss')
+parser.add_argument('--static-hybrid', action='store_true',
+                    help='enable static hybrid uniformity loss with two scales')
 parser.add_argument('--directau-alpha', default=3.0, type=float, metavar='N',
                     help='weight for DirectAU alignment loss')
 parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
+parser.add_argument('--directau-gamma-1', default=0.5, type=float, metavar='N',
+                    help='weight for static-hybrid uniformity loss term 1')
+parser.add_argument('--directau-gamma-2', default=0.5, type=float, metavar='N',
+                    help='weight for static-hybrid uniformity loss term 2')
 parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
                     help='epsilon used by DirectAU normalization helpers')
 parser.add_argument('--directau-uniformity-scale', default=4.0, type=float, metavar='N',
                     help='scale factor for DirectAU uniformity exp term')
+parser.add_argument('--directau-uniformity-scale-1', default=4.0, type=float, metavar='N',
+                    help='scale factor for static-hybrid uniformity term 1')
+parser.add_argument('--directau-uniformity-scale-2', default=6.0, type=float, metavar='N',
+                    help='scale factor for static-hybrid uniformity term 2')
 parser.add_argument('--bridge-alpha', default=1.0, type=float, metavar='N',
                     help='weight for bridged alignment term')
 parser.add_argument('--bridge-gamma', default=1.0, type=float, metavar='N',
@@ -154,6 +164,10 @@ if args.directau and args.loss_type != 'all':
     args.loss_type = 'alignment'
     args.use_uniformity_loss = True
 
+if args.static_hybrid:
+    args.loss_type = 'alignment'
+    args.use_uniformity_loss = True
+
 if args.loss_type == 'all':
     args.use_uniformity_loss = True
 
@@ -164,8 +178,12 @@ if args.bridge_beta is None:
         args.bridge_beta = 1.0
 
 assert args.directau_gamma >= 0
+assert args.directau_gamma_1 >= 0
+assert args.directau_gamma_2 >= 0
 assert args.directau_alpha >= 0
 assert args.directau_eps > 0
+assert args.directau_uniformity_scale_1 > 0
+assert args.directau_uniformity_scale_2 > 0
 assert args.bridge_alpha >= 0
 assert args.bridge_gamma >= 0
 assert args.bridge_beta > 0
