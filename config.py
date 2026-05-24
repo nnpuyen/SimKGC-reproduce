@@ -47,6 +47,8 @@ parser.add_argument('--directau', action='store_true',
                     help='compatibility alias: sets --loss-type alignment --use-uniformity-loss')
 parser.add_argument('--static-hybrid', action='store_true',
                     help='enable static hybrid uniformity loss with two scales')
+parser.add_argument('--adaptive-hybrid', action='store_true',
+                    help='enable adaptive hybrid uniformity loss with learnable mixing weight')
 parser.add_argument('--uniformity-on-query', action='store_true',
                     help='add uniformity term over query (head+relation) vectors')
 parser.add_argument('--uniformity-on-tail', action='store_true',
@@ -173,6 +175,10 @@ if args.directau and args.loss_type != 'all':
     args.use_uniformity_loss = True
 
 if args.static_hybrid:
+    args.loss_type = 'alignment'
+    args.use_uniformity_loss = True
+
+if args.adaptive_hybrid:
     args.loss_type = 'alignment'
     args.use_uniformity_loss = True
 

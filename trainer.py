@@ -20,7 +20,7 @@ from doc import Dataset, collate
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj, call_model_forward
 from metric import accuracy
-from models import build_model, ModelOutput, DirectAULoss, StaticHybridDirectAULoss
+from models import build_model, ModelOutput, DirectAULoss, StaticHybridDirectAULoss, AdaptiveHybridDirectAULoss
 from dict_hub import build_tokenizer, get_entity_dict
 from logger_config import logger
 import os 
@@ -48,6 +48,7 @@ class Trainer:
         self.use_alignment_loss = (loss_type in ['alignment', 'all'])
         self.use_bridge_loss = (loss_type == 'bridge')
         self.use_static_hybrid = bool(getattr(self.args, 'static_hybrid', False))
+        self.use_adaptive_hybrid = bool(getattr(self.args, 'adaptive_hybrid', False))
         if loss_type == 'all':
             self.use_uniformity_loss = True
         if self.use_bridge_loss:
@@ -55,6 +56,9 @@ class Trainer:
             self.bridge_gamma_base = float(getattr(self.args, 'bridge_gamma', 1.0))
             self.bridge_gamma_warmup_epochs = int(getattr(self.args, 'bridge_gamma_warmup_epochs', 0))
         if self.use_static_hybrid:
+            self.use_uniformity_loss = True
+            self.use_alignment_loss = True
+        if self.use_adaptive_hybrid:
             self.use_uniformity_loss = True
             self.use_alignment_loss = True
         
@@ -73,7 +77,22 @@ class Trainer:
             #     eps=getattr(self.args, 'directau_eps', 1e-12),
             # ).cuda()
         if self.use_alignment_loss or self.use_uniformity_loss:
-            if self.use_static_hybrid:
+            if self.use_adaptive_hybrid:
+                self.auxiliary_loss = AdaptiveHybridDirectAULoss(
+                    alpha_init=0.5,
+                    align_alpha=getattr(self.args, 'directau_alpha', 1.0),
+                    gamma=getattr(self.args, 'directau_gamma', 1.0),
+                    eps=getattr(self.args, 'directau_eps', 1e-12),
+                    uniformity_scale1=getattr(self.args, 'directau_uniformity_scale_1', 4.0),
+                    uniformity_scale2=getattr(self.args, 'directau_uniformity_scale_2', 6.0),
+                    use_alignment=self.use_alignment_loss,
+                    use_uniformity=self.use_uniformity_loss,
+                    use_uniformity_query=bool(getattr(self.args, 'uniformity_on_query', True)),
+                    use_uniformity_tail=bool(getattr(self.args, 'uniformity_on_tail', True)),
+                    use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
+                    use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
+                ).cuda()
+            elif self.use_static_hybrid:
                 self.auxiliary_loss = StaticHybridDirectAULoss(
                     alpha=getattr(self.args, 'directau_alpha', 1.0),
                     gamma1=getattr(self.args, 'directau_gamma_1', 0.5),
@@ -104,7 +123,12 @@ class Trainer:
         else:
             self.auxiliary_loss = None
 
-        self.optimizer = AdamW([p for p in self.model.parameters() if p.requires_grad],
+        optimizer_params = [p for p in self.model.parameters() if p.requires_grad]
+        if self.auxiliary_loss is not None:
+            aux_params = [p for p in self.auxiliary_loss.parameters() if p.requires_grad]
+            if aux_params:
+                optimizer_params += aux_params
+        self.optimizer = AdamW(optimizer_params,
                                lr=args.lr,
                                weight_decay=args.weight_decay)
         report_num_trainable_parameters(self.model)
@@ -536,6 +560,7 @@ class Trainer:
             'optimizer': self.optimizer.state_dict(),
             'scheduler': self.scheduler.state_dict(),
             'scaler': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
+            'auxiliary_state': self.auxiliary_loss.state_dict() if self.auxiliary_loss is not None else None,
             'best_metric': self.best_metric,
             'best_epoch': self.best_epoch,
             'early_stop_wait': self.early_stop_wait,
@@ -776,6 +801,13 @@ class Trainer:
                 self.scheduler.load_state_dict(scheduler_state)
             except Exception as exc:
                 logger.warning('Failed to load scheduler state: {}'.format(exc))
+
+        auxiliary_state = ckt_dict.get('auxiliary_state')
+        if auxiliary_state and self.auxiliary_loss is not None:
+            try:
+                self.auxiliary_loss.load_state_dict(auxiliary_state)
+            except Exception as exc:
+                logger.warning('Failed to load auxiliary loss state: {}'.format(exc))
 
         self.resume_scaler_state = ckt_dict.get('scaler')
         self.start_epoch = int(ckt_dict.get('epoch', -1)) + 1

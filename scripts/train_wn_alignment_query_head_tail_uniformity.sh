@@ -44,9 +44,11 @@ python3 -u main.py \
 --pre-batch 0 \
 --finetune-t \
 --loss-type alignment \
---use-uniformity-loss \
---directau-alpha 1 \
---directau-gamma 1 \
+--uniformity-on-query \
+--uniformity-on-head \
+--uniformity-on-tail \
+--directau-alpha 1.0 \
+--directau-gamma 0.67 \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4 \
 --no-negative-sampling \
