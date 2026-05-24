@@ -102,7 +102,7 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     dest='weight_decay')
 parser.add_argument('-p', '--print-freq', default=50, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--seed', default=None, type=int,
+parser.add_argument('--seed', default=42, type=int,
                     help='seed for initializing training. ')
 
 # only used for evaluation
