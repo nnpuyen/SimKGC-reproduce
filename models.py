@@ -15,7 +15,9 @@ class DirectAULoss(nn.Module):
     """Alignment and Uniformity loss for DirectAU model."""
     
     def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12,
-                 uniformity_scale: float = 4.0, use_alignment: bool = True, use_uniformity: bool = True):
+                 uniformity_scale: float = 4.0, use_alignment: bool = True, use_uniformity: bool = True,
+                 use_uniformity_query: bool = True, use_uniformity_tail: bool = True,
+                 use_uniformity_head: bool = False, use_uniformity_entity: bool = False):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -23,9 +25,14 @@ class DirectAULoss(nn.Module):
         self.uniformity_scale = uniformity_scale
         self.use_alignment = use_alignment
         self.use_uniformity = use_uniformity
+        self.use_uniformity_query = use_uniformity_query
+        self.use_uniformity_tail = use_uniformity_tail
+        self.use_uniformity_head = use_uniformity_head
+        self.use_uniformity_entity = use_uniformity_entity
     
-    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
-                labels: torch.tensor = None, batch_exs: list = None) -> dict:
+    def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                labels: torch.tensor = None, batch_exs: list = None,
+                head_vector: torch.tensor = None) -> dict:
         """
         Compute DirectAU loss: alignment and/or uniformity based on flags.
         
@@ -41,7 +48,20 @@ class DirectAULoss(nn.Module):
         batch_size = hr_vector.size(0)
         
         align_loss = self._compute_align_loss(hr_vector, tail_vector) if self.use_alignment else torch.tensor(0.0, device=hr_vector.device)
-        uniform_loss = self._compute_uniform_loss(hr_vector, tail_vector, batch_size, batch_exs=batch_exs) if self.use_uniformity else torch.tensor(0.0, device=hr_vector.device)
+        uniform_components = self._compute_uniform_loss(
+            hr_vector,
+            tail_vector,
+            batch_size,
+            batch_exs=batch_exs,
+            head_vector=head_vector,
+        ) if self.use_uniformity else {
+            'total': torch.tensor(0.0, device=hr_vector.device),
+            'query': torch.tensor(0.0, device=hr_vector.device),
+            'tail': torch.tensor(0.0, device=hr_vector.device),
+            'head': torch.tensor(0.0, device=hr_vector.device),
+            'entity': torch.tensor(0.0, device=hr_vector.device),
+        }
+        uniform_loss = uniform_components['total']
         scaled_align = self.alpha * align_loss
         scaled_uniform = self.gamma * uniform_loss
         total_loss = scaled_align + scaled_uniform
@@ -52,6 +72,14 @@ class DirectAULoss(nn.Module):
             'align_loss_scaled': scaled_align.detach(),
             'uniform_loss': uniform_loss.detach(),
             'uniform_loss_scaled': scaled_uniform.detach(),
+            'uniform_loss_query': uniform_components['query'].detach(),
+            'uniform_loss_tail': uniform_components['tail'].detach(),
+            'uniform_loss_head': uniform_components['head'].detach(),
+            'uniform_loss_entity': uniform_components['entity'].detach(),
+            'uniform_loss_query_scaled': (self.gamma * uniform_components['query']).detach(),
+            'uniform_loss_tail_scaled': (self.gamma * uniform_components['tail']).detach(),
+            'uniform_loss_head_scaled': (self.gamma * uniform_components['head']).detach(),
+            'uniform_loss_entity_scaled': (self.gamma * uniform_components['entity']).detach(),
         }
     
     def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
@@ -78,17 +106,16 @@ class DirectAULoss(nn.Module):
         uniform_loss = torch.log(mean_exp + self.eps)
         return uniform_loss
 
-    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor, 
-                              batch_size: int, batch_exs: list = None) -> torch.tensor:
+    def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
+                              batch_size: int, batch_exs: list = None,
+                              head_vector: torch.tensor = None) -> torch.tensor:
         """
         Uniformity loss: compute separately for hr_vector and tail_vector, then sum.
         If `batch_exs` is provided, deduplicate query vectors by the composite key
         (head_id, relation) and tail vectors by tail_id before computing uniformity so that
         repeated query or entity occurrences in a batch are treated as one.
         """
-        # Deduplicate by entity ids when available to avoid "shattering" caused by dropout
         if batch_exs is not None:
-            # Extract composite query keys and tail ids in the same order as vectors
             query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
             tail_ids = [ex.tail_id for ex in batch_exs]
 
@@ -101,21 +128,74 @@ class DirectAULoss(nn.Module):
                         uniq_idx.append(i)
                 return torch.tensor(uniq_idx, dtype=torch.long, device=hr_vector.device)
 
-            # Select unique vectors according to ids
             hr_idx = unique_indices_by_id(query_keys)
             tail_idx = unique_indices_by_id(tail_ids)
 
             hr_unique = hr_vector[hr_idx]
             tail_unique = tail_vector[tail_idx]
-
-            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_unique)
-            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique)
         else:
-            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_vector)
-            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector)
+            hr_unique = hr_vector
+            tail_unique = tail_vector
 
-        total_uniform_loss = hr_uniform_loss + tail_uniform_loss
-        return total_uniform_loss
+        total_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        query_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        tail_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        head_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        entity_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+
+        if self.use_uniformity_query:
+            query_uniform_loss = self._compute_uniform_loss_for_vectors(hr_unique)
+            total_uniform_loss = total_uniform_loss + query_uniform_loss
+        if self.use_uniformity_tail:
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique)
+            total_uniform_loss = total_uniform_loss + tail_uniform_loss
+
+        if self.use_uniformity_head and head_vector is not None:
+            if batch_exs is not None:
+                head_ids = [ex.head_id for ex in batch_exs]
+                def unique_indices_by_id(ids):
+                    seen = set()
+                    uniq_idx = []
+                    for i, idv in enumerate(ids):
+                        if idv not in seen:
+                            seen.add(idv)
+                            uniq_idx.append(i)
+                    return torch.tensor(uniq_idx, dtype=torch.long, device=head_vector.device)
+                head_idx = unique_indices_by_id(head_ids)
+                head_unique = head_vector[head_idx]
+                head_uniform_loss = self._compute_uniform_loss_for_vectors(head_unique)
+            else:
+                head_uniform_loss = self._compute_uniform_loss_for_vectors(head_vector)
+            total_uniform_loss = total_uniform_loss + head_uniform_loss
+
+        if self.use_uniformity_entity and head_vector is not None:
+            if batch_exs is not None:
+                seen = set()
+                entity_vectors = []
+                for i, ex in enumerate(batch_exs):
+                    if ex.head_id not in seen:
+                        seen.add(ex.head_id)
+                        entity_vectors.append(head_vector[i])
+                    if ex.tail_id not in seen:
+                        seen.add(ex.tail_id)
+                        entity_vectors.append(tail_vector[i])
+                if len(entity_vectors) >= 2:
+                    entity_stack = torch.stack(entity_vectors, dim=0)
+                    entity_uniform_loss = self._compute_uniform_loss_for_vectors(entity_stack)
+                else:
+                    entity_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+            else:
+                entity_stack = torch.cat([head_vector, tail_vector], dim=0)
+                entity_uniform_loss = self._compute_uniform_loss_for_vectors(entity_stack)
+            total_uniform_loss = total_uniform_loss + entity_uniform_loss
+
+        return {
+            'total': total_uniform_loss,
+            'query': query_uniform_loss,
+            'tail': tail_uniform_loss,
+            'head': head_uniform_loss,
+            'entity': entity_uniform_loss,
+        }
 
 
 class StaticHybridDirectAULoss(nn.Module):
@@ -123,7 +203,9 @@ class StaticHybridDirectAULoss(nn.Module):
 
     def __init__(self, alpha: float = 1.0, gamma1: float = 0.5, gamma2: float = 0.5,
                  eps: float = 1e-12, uniformity_scale1: float = 4.0, uniformity_scale2: float = 6.0,
-                 use_alignment: bool = True, use_uniformity: bool = True):
+                 use_alignment: bool = True, use_uniformity: bool = True,
+                 use_uniformity_query: bool = True, use_uniformity_tail: bool = True,
+                 use_uniformity_head: bool = False, use_uniformity_entity: bool = False):
         super().__init__()
         self.alpha = alpha
         self.gamma1 = gamma1
@@ -133,17 +215,37 @@ class StaticHybridDirectAULoss(nn.Module):
         self.uniformity_scale2 = uniformity_scale2
         self.use_alignment = use_alignment
         self.use_uniformity = use_uniformity
+        self.use_uniformity_query = use_uniformity_query
+        self.use_uniformity_tail = use_uniformity_tail
+        self.use_uniformity_head = use_uniformity_head
+        self.use_uniformity_entity = use_uniformity_entity
 
     def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
-                labels: torch.tensor = None, batch_exs: list = None) -> dict:
+                labels: torch.tensor = None, batch_exs: list = None,
+                head_vector: torch.tensor = None) -> dict:
         align_loss = self._compute_align_loss(hr_vector, tail_vector) if self.use_alignment else torch.tensor(0.0, device=hr_vector.device)
 
         if self.use_uniformity:
-            uniform_loss_1 = self._compute_uniform_loss(hr_vector, tail_vector, batch_exs, self.uniformity_scale1)
-            uniform_loss_2 = self._compute_uniform_loss(hr_vector, tail_vector, batch_exs, self.uniformity_scale2)
+            uniform_components_1 = self._compute_uniform_loss(hr_vector, tail_vector, batch_exs, self.uniformity_scale1, head_vector)
+            uniform_components_2 = self._compute_uniform_loss(hr_vector, tail_vector, batch_exs, self.uniformity_scale2, head_vector)
         else:
-            uniform_loss_1 = torch.tensor(0.0, device=hr_vector.device)
-            uniform_loss_2 = torch.tensor(0.0, device=hr_vector.device)
+            uniform_components_1 = {
+                'total': torch.tensor(0.0, device=hr_vector.device),
+                'query': torch.tensor(0.0, device=hr_vector.device),
+                'tail': torch.tensor(0.0, device=hr_vector.device),
+                'head': torch.tensor(0.0, device=hr_vector.device),
+                'entity': torch.tensor(0.0, device=hr_vector.device),
+            }
+            uniform_components_2 = {
+                'total': torch.tensor(0.0, device=hr_vector.device),
+                'query': torch.tensor(0.0, device=hr_vector.device),
+                'tail': torch.tensor(0.0, device=hr_vector.device),
+                'head': torch.tensor(0.0, device=hr_vector.device),
+                'entity': torch.tensor(0.0, device=hr_vector.device),
+            }
+
+        uniform_loss_1 = uniform_components_1['total']
+        uniform_loss_2 = uniform_components_2['total']
 
         scaled_align = self.alpha * align_loss
         scaled_uniform_1 = self.gamma1 * uniform_loss_1
@@ -160,6 +262,14 @@ class StaticHybridDirectAULoss(nn.Module):
             'uniform_loss_2': uniform_loss_2.detach(),
             'uniform_loss_1_scaled': scaled_uniform_1.detach(),
             'uniform_loss_2_scaled': scaled_uniform_2.detach(),
+            'uniform_loss_query': (uniform_components_1['query'] + uniform_components_2['query']).detach(),
+            'uniform_loss_tail': (uniform_components_1['tail'] + uniform_components_2['tail']).detach(),
+            'uniform_loss_head': (uniform_components_1['head'] + uniform_components_2['head']).detach(),
+            'uniform_loss_entity': (uniform_components_1['entity'] + uniform_components_2['entity']).detach(),
+            'uniform_loss_query_scaled': (self.gamma1 * uniform_components_1['query'] + self.gamma2 * uniform_components_2['query']).detach(),
+            'uniform_loss_tail_scaled': (self.gamma1 * uniform_components_1['tail'] + self.gamma2 * uniform_components_2['tail']).detach(),
+            'uniform_loss_head_scaled': (self.gamma1 * uniform_components_1['head'] + self.gamma2 * uniform_components_2['head']).detach(),
+            'uniform_loss_entity_scaled': (self.gamma1 * uniform_components_1['entity'] + self.gamma2 * uniform_components_2['entity']).detach(),
         }
 
     def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
@@ -179,7 +289,8 @@ class StaticHybridDirectAULoss(nn.Module):
         return torch.log(mean_exp + self.eps)
 
     def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
-                              batch_exs: list, scale: float) -> torch.tensor:
+                              batch_exs: list, scale: float,
+                              head_vector: torch.tensor = None) -> torch.tensor:
         if batch_exs is not None:
             query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
             tail_ids = [ex.tail_id for ex in batch_exs]
@@ -198,14 +309,68 @@ class StaticHybridDirectAULoss(nn.Module):
 
             hr_unique = hr_vector[hr_idx]
             tail_unique = tail_vector[tail_idx]
-
-            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_unique, scale)
-            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique, scale)
         else:
-            hr_uniform_loss = self._compute_uniform_loss_for_vectors(hr_vector, scale)
-            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_vector, scale)
+            hr_unique = hr_vector
+            tail_unique = tail_vector
 
-        return hr_uniform_loss + tail_uniform_loss
+        total_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        query_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        tail_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        head_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        entity_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+        if self.use_uniformity_query:
+            query_uniform_loss = self._compute_uniform_loss_for_vectors(hr_unique, scale)
+            total_uniform_loss = total_uniform_loss + query_uniform_loss
+        if self.use_uniformity_tail:
+            tail_uniform_loss = self._compute_uniform_loss_for_vectors(tail_unique, scale)
+            total_uniform_loss = total_uniform_loss + tail_uniform_loss
+
+        if self.use_uniformity_head and head_vector is not None:
+            if batch_exs is not None:
+                head_ids = [ex.head_id for ex in batch_exs]
+                def unique_indices_by_id(ids):
+                    seen = set()
+                    uniq_idx = []
+                    for i, idv in enumerate(ids):
+                        if idv not in seen:
+                            seen.add(idv)
+                            uniq_idx.append(i)
+                    return torch.tensor(uniq_idx, dtype=torch.long, device=head_vector.device)
+                head_idx = unique_indices_by_id(head_ids)
+                head_unique = head_vector[head_idx]
+                head_uniform_loss = self._compute_uniform_loss_for_vectors(head_unique, scale)
+            else:
+                head_uniform_loss = self._compute_uniform_loss_for_vectors(head_vector, scale)
+            total_uniform_loss = total_uniform_loss + head_uniform_loss
+
+        if self.use_uniformity_entity and head_vector is not None:
+            if batch_exs is not None:
+                seen = set()
+                entity_vectors = []
+                for i, ex in enumerate(batch_exs):
+                    if ex.head_id not in seen:
+                        seen.add(ex.head_id)
+                        entity_vectors.append(head_vector[i])
+                    if ex.tail_id not in seen:
+                        seen.add(ex.tail_id)
+                        entity_vectors.append(tail_vector[i])
+                if len(entity_vectors) >= 2:
+                    entity_stack = torch.stack(entity_vectors, dim=0)
+                    entity_uniform_loss = self._compute_uniform_loss_for_vectors(entity_stack, scale)
+                else:
+                    entity_uniform_loss = torch.tensor(0.0, device=hr_vector.device, dtype=hr_vector.dtype)
+            else:
+                entity_stack = torch.cat([head_vector, tail_vector], dim=0)
+                entity_uniform_loss = self._compute_uniform_loss_for_vectors(entity_stack, scale)
+            total_uniform_loss = total_uniform_loss + entity_uniform_loss
+
+        return {
+            'total': total_uniform_loss,
+            'query': query_uniform_loss,
+            'tail': tail_uniform_loss,
+            'head': head_uniform_loss,
+            'entity': entity_uniform_loss,
+        }
 
 
 # class BridgedLoss(nn.Module):
@@ -293,6 +458,7 @@ class ModelOutput:
     inv_t: torch.tensor
     hr_vector: torch.tensor
     tail_vector: torch.tensor
+    head_vector: torch.tensor
 
 
 class CustomBertModel(nn.Module, ABC):
@@ -387,7 +553,8 @@ class CustomBertModel(nn.Module, ABC):
                     'labels': labels,
                     'inv_t': torch.tensor(1.0, device=hr_vector.device),
                     'hr_vector': hr_vector,
-                    'tail_vector': tail_vector}
+                'tail_vector': tail_vector,
+                'head_vector': output_dict['head_vector']}
         
         # For InfoNCE mode (default)
         if self.training:
@@ -423,15 +590,18 @@ class CustomBertModel(nn.Module, ABC):
         if self.use_alignment_loss or self.use_uniformity_loss:
             out_hr_vector = hr_vector
             out_tail_vector = tail_vector
+            out_head_vector = output_dict['head_vector']
         else:
             out_hr_vector = hr_vector.detach()
             out_tail_vector = tail_vector.detach()
+            out_head_vector = output_dict['head_vector'].detach()
 
         return {'logits': logits,
             'labels': labels,
             'inv_t': self.log_inv_t.detach().exp(),
             'hr_vector': out_hr_vector,
-            'tail_vector': out_tail_vector}
+            'tail_vector': out_tail_vector,
+            'head_vector': out_head_vector}
 
     def _compute_pre_batch_logits(self, hr_vector: torch.tensor,
                                   tail_vector: torch.tensor,

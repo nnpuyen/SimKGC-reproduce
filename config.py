@@ -47,6 +47,14 @@ parser.add_argument('--directau', action='store_true',
                     help='compatibility alias: sets --loss-type alignment --use-uniformity-loss')
 parser.add_argument('--static-hybrid', action='store_true',
                     help='enable static hybrid uniformity loss with two scales')
+parser.add_argument('--uniformity-on-query', action='store_true',
+                    help='add uniformity term over query (head+relation) vectors')
+parser.add_argument('--uniformity-on-tail', action='store_true',
+                    help='add uniformity term over tail entity vectors')
+parser.add_argument('--uniformity-on-head', action='store_true',
+                    help='add uniformity term over head entity vectors')
+parser.add_argument('--uniformity-on-entity', action='store_true',
+                    help='add uniformity term over unique head+tail entity vectors')
 parser.add_argument('--directau-alpha', default=3.0, type=float, metavar='N',
                     help='weight for DirectAU alignment loss')
 parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
@@ -168,8 +176,15 @@ if args.static_hybrid:
     args.loss_type = 'alignment'
     args.use_uniformity_loss = True
 
+if args.uniformity_on_query or args.uniformity_on_tail or args.uniformity_on_head or args.uniformity_on_entity:
+    args.use_uniformity_loss = True
+
 if args.loss_type == 'all':
     args.use_uniformity_loss = True
+
+if args.use_uniformity_loss and not args.uniformity_on_query and not args.uniformity_on_tail:
+    args.uniformity_on_query = True
+    args.uniformity_on_tail = True
 
 if args.bridge_beta is None:
     if args.t > 0:

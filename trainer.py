@@ -83,6 +83,10 @@ class Trainer:
                     uniformity_scale2=getattr(self.args, 'directau_uniformity_scale_2', 6.0),
                     use_alignment=self.use_alignment_loss,
                     use_uniformity=self.use_uniformity_loss,
+                    use_uniformity_query=bool(getattr(self.args, 'uniformity_on_query', True)),
+                    use_uniformity_tail=bool(getattr(self.args, 'uniformity_on_tail', True)),
+                    use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
+                    use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
                 ).cuda()
             else:
                 self.auxiliary_loss = DirectAULoss(
@@ -92,6 +96,10 @@ class Trainer:
                     uniformity_scale=getattr(self.args, 'directau_uniformity_scale', 4.0),
                     use_alignment=self.use_alignment_loss,
                     use_uniformity=self.use_uniformity_loss,
+                    use_uniformity_query=bool(getattr(self.args, 'uniformity_on_query', True)),
+                    use_uniformity_tail=bool(getattr(self.args, 'uniformity_on_tail', True)),
+                    use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
+                    use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
                 ).cuda()
         else:
             self.auxiliary_loss = None
@@ -102,7 +110,25 @@ class Trainer:
         report_num_trainable_parameters(self.model)
 
         # tracking fields for loss components
-        self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
+        self.last_regularizer = {
+            'align_loss': 0.0,
+            'align_loss_scaled': 0.0,
+            'uniform_loss': 0.0,
+            'uniform_loss_scaled': 0.0,
+            'uniform_loss_query': 0.0,
+            'uniform_loss_tail': 0.0,
+            'uniform_loss_head': 0.0,
+            'uniform_loss_entity': 0.0,
+            'uniform_loss_query_scaled': 0.0,
+            'uniform_loss_tail_scaled': 0.0,
+            'uniform_loss_head_scaled': 0.0,
+            'uniform_loss_entity_scaled': 0.0,
+            'uniform_loss_1': 0.0,
+            'uniform_loss_2': 0.0,
+            'uniform_loss_1_scaled': 0.0,
+            'uniform_loss_2_scaled': 0.0,
+            'total_aux_loss': 0.0,
+        }
         self.last_infonce_loss = 0.0
 
         train_dataset = Dataset(path=args.train_path, task=args.task)
@@ -138,7 +164,7 @@ class Trainer:
                 num_workers=args.workers,
                 pin_memory=True)
 
-    def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, batch_exs, batch_size, triplet_mask=None):
+    def _compute_batch_loss(self, logits, labels, hr_vector, tail_vector, head_vector, batch_exs, batch_size, triplet_mask=None):
         total_loss = None
         self.last_infonce_loss = 0.0
 
@@ -160,7 +186,7 @@ class Trainer:
             if self.use_bridge_loss:
                 regularizer = self.auxiliary_loss(hr_vector, tail_vector, triplet_mask=triplet_mask)
             else:
-                regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs)
+                regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs, head_vector=head_vector)
             total_loss = regularizer['loss'] if total_loss is None else total_loss + regularizer['loss']
 
             # Store last regularizer components for logging/inspection
@@ -170,10 +196,40 @@ class Trainer:
                     'align_loss_scaled': float(regularizer.get('align_loss_scaled', regularizer.get('align_loss', 0.0)).item() if hasattr(regularizer.get('align_loss_scaled', regularizer.get('align_loss', 0.0)), 'item') else regularizer.get('align_loss_scaled', regularizer.get('align_loss', 0.0))),
                     'uniform_loss': float(regularizer.get('uniform_loss', 0.0).item() if hasattr(regularizer.get('uniform_loss', 0.0), 'item') else regularizer.get('uniform_loss', 0.0)),
                     'uniform_loss_scaled': float(regularizer.get('uniform_loss_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_scaled', 0.0), 'item') else regularizer.get('uniform_loss_scaled', 0.0)),
+                    'uniform_loss_query': float(regularizer.get('uniform_loss_query', 0.0).item() if hasattr(regularizer.get('uniform_loss_query', 0.0), 'item') else regularizer.get('uniform_loss_query', 0.0)),
+                    'uniform_loss_tail': float(regularizer.get('uniform_loss_tail', 0.0).item() if hasattr(regularizer.get('uniform_loss_tail', 0.0), 'item') else regularizer.get('uniform_loss_tail', 0.0)),
+                    'uniform_loss_head': float(regularizer.get('uniform_loss_head', 0.0).item() if hasattr(regularizer.get('uniform_loss_head', 0.0), 'item') else regularizer.get('uniform_loss_head', 0.0)),
+                    'uniform_loss_entity': float(regularizer.get('uniform_loss_entity', 0.0).item() if hasattr(regularizer.get('uniform_loss_entity', 0.0), 'item') else regularizer.get('uniform_loss_entity', 0.0)),
+                    'uniform_loss_query_scaled': float(regularizer.get('uniform_loss_query_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_query_scaled', 0.0), 'item') else regularizer.get('uniform_loss_query_scaled', 0.0)),
+                    'uniform_loss_tail_scaled': float(regularizer.get('uniform_loss_tail_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_tail_scaled', 0.0), 'item') else regularizer.get('uniform_loss_tail_scaled', 0.0)),
+                    'uniform_loss_head_scaled': float(regularizer.get('uniform_loss_head_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_head_scaled', 0.0), 'item') else regularizer.get('uniform_loss_head_scaled', 0.0)),
+                    'uniform_loss_entity_scaled': float(regularizer.get('uniform_loss_entity_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_entity_scaled', 0.0), 'item') else regularizer.get('uniform_loss_entity_scaled', 0.0)),
+                    'uniform_loss_1': float(regularizer.get('uniform_loss_1', 0.0).item() if hasattr(regularizer.get('uniform_loss_1', 0.0), 'item') else regularizer.get('uniform_loss_1', 0.0)),
+                    'uniform_loss_2': float(regularizer.get('uniform_loss_2', 0.0).item() if hasattr(regularizer.get('uniform_loss_2', 0.0), 'item') else regularizer.get('uniform_loss_2', 0.0)),
+                    'uniform_loss_1_scaled': float(regularizer.get('uniform_loss_1_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_1_scaled', 0.0), 'item') else regularizer.get('uniform_loss_1_scaled', 0.0)),
+                    'uniform_loss_2_scaled': float(regularizer.get('uniform_loss_2_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_2_scaled', 0.0), 'item') else regularizer.get('uniform_loss_2_scaled', 0.0)),
                     'total_aux_loss': float(regularizer.get('loss', 0.0).item() if hasattr(regularizer.get('loss', 0.0), 'item') else regularizer.get('loss', 0.0)),
                 }
             except Exception:
-                self.last_regularizer = {'align_loss': 0.0, 'align_loss_scaled': 0.0, 'uniform_loss': 0.0, 'uniform_loss_scaled': 0.0, 'total_aux_loss': 0.0}
+                self.last_regularizer = {
+                    'align_loss': 0.0,
+                    'align_loss_scaled': 0.0,
+                    'uniform_loss': 0.0,
+                    'uniform_loss_scaled': 0.0,
+                    'uniform_loss_query': 0.0,
+                    'uniform_loss_tail': 0.0,
+                    'uniform_loss_head': 0.0,
+                    'uniform_loss_entity': 0.0,
+                    'uniform_loss_query_scaled': 0.0,
+                    'uniform_loss_tail_scaled': 0.0,
+                    'uniform_loss_head_scaled': 0.0,
+                    'uniform_loss_entity_scaled': 0.0,
+                    'uniform_loss_1': 0.0,
+                    'uniform_loss_2': 0.0,
+                    'uniform_loss_1_scaled': 0.0,
+                    'uniform_loss_2_scaled': 0.0,
+                    'total_aux_loss': 0.0,
+                }
 
         if total_loss is None:
             raise RuntimeError('No training objective is enabled; check --loss-type and flags')
@@ -513,10 +569,10 @@ class Trainer:
             outputs = get_model_obj(self.model).compute_logits(output_dict=outputs, batch_dict=batch_dict)
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
-            hr_vector, tail_vector = outputs.hr_vector, outputs.tail_vector
+            hr_vector, tail_vector, head_vector = outputs.hr_vector, outputs.tail_vector, outputs.head_vector
             
             batch_exs = batch_dict.get('batch_data', None)
-            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size, batch_dict.get('triplet_mask', None))
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, head_vector, batch_exs, batch_size, batch_dict.get('triplet_mask', None))
             
             losses.update(loss.item(), batch_size)
 
@@ -544,11 +600,32 @@ class Trainer:
         inv_t = AverageMeter('InvT', ':6.2f')
         align_meter = AverageMeter('Align', ':.6f')
         uniform_meter = AverageMeter('Uniform', ':.6f')
+        uniform_q_meter = AverageMeter('UQ', ':.6f')
+        uniform_t_meter = AverageMeter('UT', ':.6f')
+        uniform_h_meter = AverageMeter('UH', ':.6f')
+        uniform_e_meter = AverageMeter('UE', ':.6f')
+        uniform_s1_meter = AverageMeter('U1', ':.6f')
+        uniform_s2_meter = AverageMeter('U2', ':.6f')
         infonce_meter = AverageMeter('InfoNCE', ':.6f')
         gradnorm_meter = AverageMeter('GradNorm', ':.4f')
         progress = ProgressMeter(
             len(self.train_loader),
-            [losses, inv_t, top1, top3, align_meter, uniform_meter, infonce_meter, gradnorm_meter],
+            [
+                losses,
+                inv_t,
+                top1,
+                top3,
+                align_meter,
+                uniform_meter,
+                uniform_q_meter,
+                uniform_t_meter,
+                uniform_h_meter,
+                uniform_e_meter,
+                uniform_s1_meter,
+                uniform_s2_meter,
+                infonce_meter,
+                gradnorm_meter,
+            ],
             prefix="Epoch: [{}]".format(epoch))
 
         for i, batch_dict in enumerate(self.train_loader):
@@ -568,11 +645,11 @@ class Trainer:
             outputs = get_model_obj(self.model).compute_logits(output_dict=outputs, batch_dict=batch_dict)
             outputs = ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
-            hr_vector, tail_vector = outputs.hr_vector, outputs.tail_vector
+            hr_vector, tail_vector, head_vector = outputs.hr_vector, outputs.tail_vector, outputs.head_vector
             assert logits.size(0) == batch_size
             
             batch_exs = batch_dict.get('batch_data', None)
-            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, batch_exs, batch_size, batch_dict.get('triplet_mask', None))
+            loss = self._compute_batch_loss(logits, labels, hr_vector, tail_vector, head_vector, batch_exs, batch_size, batch_dict.get('triplet_mask', None))
 
             acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
             top1.update(acc1.item(), batch_size)
@@ -586,6 +663,12 @@ class Trainer:
                 align_meter.update(self.last_regularizer.get('align_loss_scaled', self.last_regularizer.get('align_loss', 0.0)), batch_size)
                 # display the gamma-scaled uniformity (actual contribution to loss)
                 uniform_meter.update(self.last_regularizer.get('uniform_loss_scaled', self.last_regularizer.get('uniform_loss', 0.0)), batch_size)
+                uniform_q_meter.update(self.last_regularizer.get('uniform_loss_query_scaled', self.last_regularizer.get('uniform_loss_query', 0.0)), batch_size)
+                uniform_t_meter.update(self.last_regularizer.get('uniform_loss_tail_scaled', self.last_regularizer.get('uniform_loss_tail', 0.0)), batch_size)
+                uniform_h_meter.update(self.last_regularizer.get('uniform_loss_head_scaled', self.last_regularizer.get('uniform_loss_head', 0.0)), batch_size)
+                uniform_e_meter.update(self.last_regularizer.get('uniform_loss_entity_scaled', self.last_regularizer.get('uniform_loss_entity', 0.0)), batch_size)
+                uniform_s1_meter.update(self.last_regularizer.get('uniform_loss_1_scaled', self.last_regularizer.get('uniform_loss_1', 0.0)), batch_size)
+                uniform_s2_meter.update(self.last_regularizer.get('uniform_loss_2_scaled', self.last_regularizer.get('uniform_loss_2', 0.0)), batch_size)
             # Update InfoNCE meter
             try:
                 infonce_meter.update(getattr(self, 'last_infonce_loss', 0.0), batch_size)
