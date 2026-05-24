@@ -21,6 +21,10 @@ parser.add_argument('--model-dir', default='', type=str, metavar='N',
                     help='path to model dir')
 parser.add_argument('--output-dir', default='', type=str, metavar='N',
                     help='directory used to save checkpoints, predictions, and logs')
+parser.add_argument('--resume', action='store_true',
+                    help='resume training from checkpoint (use --resume-path or --model-dir)')
+parser.add_argument('--resume-path', default='', type=str, metavar='N',
+                    help='checkpoint file or directory; if empty uses --model-dir')
 parser.add_argument('--warmup', default=400, type=int, metavar='N',
                     help='warmup steps')
 parser.add_argument('--max-to-keep', default=5, type=int, metavar='N',

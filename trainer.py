@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.utils.data
 
 from typing import Dict
+from collections import OrderedDict
 from transformers import get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from torch.optim import AdamW
 
@@ -97,6 +98,10 @@ class Trainer:
         self.best_metric = None
         self.best_epoch = None
         self.early_stop_wait = 0
+        self.start_epoch = 0
+        self.resume_checkpoint_path = None
+        self.resume_scaler_state = None
+        self._maybe_resume()
 
         self.train_loader = torch.utils.data.DataLoader(
             train_dataset,
@@ -162,11 +167,22 @@ class Trainer:
     def train_loop(self):
         if self.args.use_amp:
             self.scaler = torch.cuda.amp.GradScaler()
+            if self.resume_scaler_state is not None:
+                try:
+                    self.scaler.load_state_dict(self.resume_scaler_state)
+                    logger.info('Loaded AMP scaler state from resume checkpoint')
+                except Exception as exc:
+                    logger.warning('Failed to load AMP scaler state: {}'.format(exc))
+
+        if self.start_epoch >= self.args.epochs:
+            logger.info('Start epoch {} >= total epochs {}; nothing to train'.format(
+                self.start_epoch, self.args.epochs))
+            return
 
         total_start_time = time.time()
         train_time = 0.0
 
-        for epoch in range(self.args.epochs):
+        for epoch in range(self.start_epoch, self.args.epochs):
             epoch_train_start = time.time()
             # train for one epoch
             self.train_epoch(epoch)
@@ -445,6 +461,12 @@ class Trainer:
             'epoch': epoch,
             'args': self.args.__dict__,
             'state_dict': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+            'scaler': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
+            'best_metric': self.best_metric,
+            'best_epoch': self.best_epoch,
+            'early_stop_wait': self.early_stop_wait,
         }, is_best=is_best, filename=filename)
         delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.model_dir),
                        keep=self.args.max_to_keep)
@@ -595,6 +617,74 @@ class Trainer:
                                                    num_training_steps=num_training_steps)
         else:
             assert False, 'Unknown lr scheduler: {}'.format(self.args.scheduler)
+
+    def _resolve_checkpoint_path(self, ckt_path: str) -> str:
+        if not ckt_path:
+            return ''
+
+        if os.path.isfile(ckt_path):
+            return ckt_path
+
+        if not os.path.isdir(ckt_path):
+            return ''
+
+        preferred = ['model_last.mdl', 'model_best.mdl']
+        for name in preferred:
+            candidate = os.path.join(ckt_path, name)
+            if os.path.isfile(candidate):
+                return candidate
+
+        checkpoint_files = glob.glob(os.path.join(ckt_path, 'checkpoint_*.mdl'))
+        if checkpoint_files:
+            checkpoint_files = sorted(checkpoint_files, key=os.path.getmtime, reverse=True)
+            return checkpoint_files[0]
+
+        return ''
+
+    def _maybe_resume(self):
+        if not getattr(self.args, 'resume', False):
+            return
+
+        resume_source = getattr(self.args, 'resume_path', '') or self.args.model_dir
+        resolved_path = self._resolve_checkpoint_path(resume_source)
+        if not resolved_path:
+            logger.info('Resume requested but no checkpoint found at {}'.format(resume_source))
+            return
+
+        ckt_dict = torch.load(resolved_path, map_location='cpu')
+        state_dict = ckt_dict.get('state_dict')
+        if state_dict:
+            model_obj = get_model_obj(self.model)
+            new_state_dict = OrderedDict()
+            for k, v in state_dict.items():
+                if k.startswith('module.'):
+                    k = k[len('module.'):]
+                new_state_dict[k] = v
+            model_obj.load_state_dict(new_state_dict, strict=True)
+        else:
+            logger.warning('Checkpoint missing state_dict; skip model weight load')
+
+        optimizer_state = ckt_dict.get('optimizer')
+        if optimizer_state:
+            try:
+                self.optimizer.load_state_dict(optimizer_state)
+            except Exception as exc:
+                logger.warning('Failed to load optimizer state: {}'.format(exc))
+
+        scheduler_state = ckt_dict.get('scheduler')
+        if scheduler_state:
+            try:
+                self.scheduler.load_state_dict(scheduler_state)
+            except Exception as exc:
+                logger.warning('Failed to load scheduler state: {}'.format(exc))
+
+        self.resume_scaler_state = ckt_dict.get('scaler')
+        self.start_epoch = int(ckt_dict.get('epoch', -1)) + 1
+        self.best_metric = ckt_dict.get('best_metric', self.best_metric)
+        self.best_epoch = ckt_dict.get('best_epoch', self.best_epoch)
+        self.early_stop_wait = ckt_dict.get('early_stop_wait', self.early_stop_wait)
+        self.resume_checkpoint_path = resolved_path
+        logger.info('Resumed from checkpoint: {}'.format(resolved_path))
 
     def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=128):
         import numpy as np
