@@ -25,6 +25,8 @@ parser.add_argument('--resume', action='store_true',
                     help='resume training from checkpoint (use --resume-path or --model-dir)')
 parser.add_argument('--resume-path', default='', type=str, metavar='N',
                     help='checkpoint file or directory; if empty uses --model-dir')
+parser.add_argument('--save-weights-only', action='store_true',
+                    help='save checkpoints with only model weights (no optimizer/scheduler/scaler)')
 parser.add_argument('--warmup', default=400, type=int, metavar='N',
                     help='warmup steps')
 parser.add_argument('--max-to-keep', default=5, type=int, metavar='N',
@@ -69,6 +71,16 @@ parser.add_argument('--directau-eps', default=1e-12, type=float, metavar='N',
                     help='epsilon used by DirectAU normalization helpers')
 parser.add_argument('--directau-uniformity-scale', default=4.0, type=float, metavar='N',
                     help='scale factor for DirectAU uniformity exp term')
+parser.add_argument('--linear-schedule', action='store_true',
+                    help='linearly schedule DirectAU uniformity scale across epochs')
+parser.add_argument('--linear-schedule-start', default=None, type=float, metavar='N',
+                    help='starting uniformity scale for linear schedule (default: use --directau-uniformity-scale)')
+parser.add_argument('--linear-schedule-end', default=None, type=float, metavar='N',
+                    help='ending uniformity scale for linear schedule (default: use --directau-uniformity-scale)')
+parser.add_argument('--linear-schedule-start-epoch', default=0, type=int, metavar='N',
+                    help='epoch index to start linear schedule (0-based)')
+parser.add_argument('--linear-schedule-epochs', default=0, type=int, metavar='N',
+                    help='number of epochs to schedule over (0 means until total epochs)')
 parser.add_argument('--directau-uniformity-scale-1', default=4.0, type=float, metavar='N',
                     help='scale factor for static-hybrid uniformity term 1')
 parser.add_argument('--directau-uniformity-scale-2', default=6.0, type=float, metavar='N',

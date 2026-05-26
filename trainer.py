@@ -279,6 +279,7 @@ class Trainer:
         train_time = 0.0
 
         for epoch in range(self.start_epoch, self.args.epochs):
+            self._maybe_update_uniformity_scale(epoch)
             epoch_train_start = time.time()
             # train for one epoch
             self.train_epoch(epoch)
@@ -553,18 +554,22 @@ class Trainer:
         filename = '{}/checkpoint_{}_{}.mdl'.format(self.args.model_dir, epoch, step)
         if step == 0:
             filename = '{}/checkpoint_epoch{}.mdl'.format(self.args.model_dir, epoch)
-        save_checkpoint({
+        checkpoint_state = {
             'epoch': epoch,
             'args': self.args.__dict__,
             'state_dict': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'scheduler': self.scheduler.state_dict(),
-            'scaler': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
-            'auxiliary_state': self.auxiliary_loss.state_dict() if self.auxiliary_loss is not None else None,
             'best_metric': self.best_metric,
             'best_epoch': self.best_epoch,
             'early_stop_wait': self.early_stop_wait,
-        }, is_best=is_best, filename=filename)
+        }
+        if not getattr(self.args, 'save_weights_only', False):
+            checkpoint_state.update({
+                'optimizer': self.optimizer.state_dict(),
+                'scheduler': self.scheduler.state_dict(),
+                'scaler': self.scaler.state_dict() if hasattr(self, 'scaler') else None,
+                'auxiliary_state': self.auxiliary_loss.state_dict() if self.auxiliary_loss is not None else None,
+            })
+        save_checkpoint(checkpoint_state, is_best=is_best, filename=filename)
         delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.model_dir),
                        keep=self.args.max_to_keep)
 
@@ -741,6 +746,34 @@ class Trainer:
                                                    num_training_steps=num_training_steps)
         else:
             assert False, 'Unknown lr scheduler: {}'.format(self.args.scheduler)
+
+    def _maybe_update_uniformity_scale(self, epoch: int) -> None:
+        if not getattr(self.args, 'linear_schedule', False):
+            return
+
+        if self.auxiliary_loss is None or not hasattr(self.auxiliary_loss, 'uniformity_scale'):
+            return
+
+        start_scale = self.args.directau_uniformity_scale if self.args.linear_schedule_start is None else float(self.args.linear_schedule_start)
+        end_scale = self.args.directau_uniformity_scale if self.args.linear_schedule_end is None else float(self.args.linear_schedule_end)
+        start_epoch = int(getattr(self.args, 'linear_schedule_start_epoch', 0))
+        total_epochs = int(getattr(self.args, 'linear_schedule_epochs', 0))
+        if total_epochs <= 0:
+            total_epochs = max(1, self.args.epochs - start_epoch)
+
+        if epoch < start_epoch:
+            scale_value = start_scale
+        else:
+            progress = min(1.0, max(0.0, (epoch - start_epoch) / float(total_epochs)))
+            scale_value = start_scale + (end_scale - start_scale) * progress
+
+        if scale_value <= 0:
+            logger.warning('Scheduled uniformity scale <= 0 ({}); skip update'.format(scale_value))
+            return
+
+        self.auxiliary_loss.uniformity_scale = float(scale_value)
+        self.args.directau_uniformity_scale = float(scale_value)
+        logger.info('Linear schedule uniformity scale at epoch {}: {:.6f}'.format(epoch, scale_value))
 
     def _resolve_checkpoint_path(self, ckt_path: str) -> str:
         if not ckt_path:
