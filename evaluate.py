@@ -73,6 +73,24 @@ def _ensure_eval_context() -> None:
         all_triplet_dict = get_all_triplet_dict()
 
 
+def _log_eval_context() -> None:
+    logger.info(
+        'Eval args snapshot: task=%s train_path=%s valid_path=%s use_link_graph=%s '
+        'rerank_n_hop=%s neighbor_weight=%s max_num_tokens=%s chunk_size=%s batch_size=%s',
+        args.task,
+        args.train_path,
+        args.valid_path,
+        args.use_link_graph,
+        args.rerank_n_hop,
+        args.neighbor_weight,
+        args.max_num_tokens,
+        getattr(args, 'chunk_size', None),
+        args.batch_size,
+    )
+    if entity_dict is not None:
+        logger.info('Eval entity_dict size: %s', len(entity_dict))
+
+
 @dataclass
 class PredInfo:
     head: str
@@ -170,6 +188,7 @@ def predict_by_split():
     predictor = BertPredictor()
     predictor.load(ckt_path=args.eval_model_path)
     _ensure_eval_context()
+    _log_eval_context()
     entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs, batch_size=512)
 
     # For link prediction in test mode, use unlabeled test.txt instead of labeled test_w_label.txt
