@@ -65,7 +65,6 @@ echo "eval.sh config: task=${task} model_path=${model_path} DATA_DIR=${DATA_DIR}
 
 python3 -u evaluate.py \
 --task "${task}" \
---is-test \
 --eval-model-path "${model_path}" \
 --train-path "${DATA_DIR}/train.txt.json" \
 --valid-path "${test_path}" "$@"
