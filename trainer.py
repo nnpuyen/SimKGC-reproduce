@@ -426,6 +426,10 @@ class Trainer:
                 self._run_test_evaluation(epoch)
 
         self._run_test_evaluation(epoch)
+
+        best_checkpoint = os.path.join(self.args.model_dir, 'model_best.mdl')
+        if self._load_model_weights(best_checkpoint):
+            self._run_test_evaluation(epoch, tag='best')
         # # Link prediction evaluation on validation set after each epoch
         # valid_path = self.args.valid_path
         # if valid_path and os.path.exists(valid_path):
@@ -448,8 +452,11 @@ class Trainer:
                 with open(best_log_path, 'a', encoding='utf-8') as f:
                     f.write(best_summary + '\n')
 
-    def _run_test_evaluation(self, epoch):
+    def _run_test_evaluation(self, epoch, tag: str = '', model=None):
         test_results = {}
+        eval_model = model if model is not None else self.model
+        suffix = f"_{tag}" if tag else ''
+        log_prefix = f"[{tag.upper()} TEST]" if tag else "[TEST]"
 
         test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
         if self.args.valid_label_path:
@@ -458,9 +465,9 @@ class Trainer:
             elif self.args.valid_label_path.endswith('.txt'):
                 test_label_path = self.args.valid_label_path.replace('valid.txt', 'test_w_label.txt')
         if test_label_path and os.path.exists(test_label_path):
-            log_path = os.path.join(self.args.model_dir, 'test_metrics.log')
+            log_path = os.path.join(self.args.model_dir, f'test_metrics{suffix}.log')
             test_results['triple_classification'] = self.evaluate_triple_classification_inplace(
-                self.model,
+                eval_model,
                 test_label_path,
                 log_path,
             )
@@ -477,14 +484,14 @@ class Trainer:
             test_eval_path = os.path.join('data', 'WN18RR', 'test.txt.json')
         if test_eval_path and os.path.exists(test_eval_path):
             test_entity_dict = get_entity_dict()
-            test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
+            test_output_path = os.path.join(self.args.model_dir, f'test_link_prediction{suffix}.log')
             # Evaluate both forward and backward directions for test set
-            forward_metrics = self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=True)
-            backward_metrics = self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=False)
+            forward_metrics = self.evaluate_link_prediction_inplace(eval_model, test_eval_path, test_entity_dict, test_output_path, eval_forward=True)
+            backward_metrics = self.evaluate_link_prediction_inplace(eval_model, test_eval_path, test_entity_dict, test_output_path, eval_forward=False)
             # Average metrics
             if forward_metrics and backward_metrics:
                 avg_metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
-                log_str = f"[TEST] Forward: {json.dumps(forward_metrics)}\nBackward: {json.dumps(backward_metrics)}\nAverage: {json.dumps(avg_metrics)}"
+                log_str = f"{log_prefix} Forward: {json.dumps(forward_metrics)}\nBackward: {json.dumps(backward_metrics)}\nAverage: {json.dumps(avg_metrics)}"
                 print(log_str)
                 logger.info(log_str)
                 with open(test_output_path, 'a', encoding='utf-8') as f:
@@ -494,14 +501,34 @@ class Trainer:
             summary = {
                 'epoch': epoch,
                 'stage': 'test',
+                'tag': tag or 'last',
                 'metrics': test_results,
             }
-            summary_path = os.path.join(self.args.model_dir, f'test_metrics_epoch{epoch + 1}.json')
+            summary_path = os.path.join(self.args.model_dir, f'test_metrics{suffix}_epoch{epoch + 1}.json')
             with open(summary_path, 'w', encoding='utf-8') as f:
                 json.dump(summary, f, ensure_ascii=False, indent=4)
-            log_str = f"[EPOCH {epoch}] Test summary: {json.dumps(summary, ensure_ascii=False)}"
+            log_str = f"[EPOCH {epoch}] {log_prefix} summary: {json.dumps(summary, ensure_ascii=False)}"
             print(log_str)
             logger.info(log_str)
+
+    def _load_model_weights(self, checkpoint_path: str) -> bool:
+        if not checkpoint_path or not os.path.exists(checkpoint_path):
+            logger.warning('Checkpoint not found for evaluation: %s', checkpoint_path)
+            return False
+        ckt_dict = torch.load(checkpoint_path, map_location='cpu')
+        state_dict = ckt_dict.get('state_dict')
+        if not state_dict:
+            logger.warning('Checkpoint missing state_dict: %s', checkpoint_path)
+            return False
+        model_obj = get_model_obj(self.model)
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            if k.startswith('module.'):
+                k = k[len('module.'):]
+            new_state_dict[k] = v
+        model_obj.load_state_dict(new_state_dict, strict=True)
+        logger.info('Loaded model weights for evaluation from %s', checkpoint_path)
+        return True
 
     @torch.no_grad()
     def _run_eval(self, epoch, step=0):
