@@ -56,7 +56,6 @@ class BertPredictor:
                 self.train_args.__dict__[k] = v
         logger.info('Args used in training: {}'.format(json.dumps(self.train_args.__dict__, ensure_ascii=False, indent=4)))
         args.use_link_graph = self.train_args.use_link_graph
-        args.is_test = True
 
     @torch.no_grad()
     def predict_by_examples(self, examples: List[Example]):
