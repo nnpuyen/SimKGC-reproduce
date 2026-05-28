@@ -106,14 +106,15 @@ class BertPredictor:
         args.is_test = True
 
     @torch.no_grad()
-    def predict_by_examples(self, examples: List[Example]):
+    def predict_by_examples(self, examples: List[Example], batch_size: int = None):
         if not examples:
             raise ValueError('predict_by_examples received no examples; check the evaluation split format and filters.')
 
+        effective_batch_size = max(batch_size or args.batch_size, 512)
         data_loader = torch.utils.data.DataLoader(
             Dataset(path='', examples=examples, task=args.task),
             num_workers=1,
-            batch_size=max(args.batch_size, 512),
+            batch_size=effective_batch_size,
             collate_fn=collate,
             shuffle=False)
 
@@ -128,15 +129,19 @@ class BertPredictor:
         return torch.cat(hr_tensor_list, dim=0), torch.cat(tail_tensor_list, dim=0)
 
     @torch.no_grad()
-    def predict_by_entities(self, entity_exs) -> torch.tensor:
+    def predict_by_entities(self, entity_exs, batch_size: int = None) -> torch.tensor:
         examples = []
         for entity_ex in entity_exs:
             examples.append(Example(head_id='', relation='',
                                     tail_id=entity_ex.entity_id))
+        if batch_size is None:
+            effective_batch_size = max(args.batch_size, 1024)
+        else:
+            effective_batch_size = max(batch_size, 512)
         data_loader = torch.utils.data.DataLoader(
             Dataset(path='', examples=examples, task=args.task),
             num_workers=2,
-            batch_size=max(args.batch_size, 1024),
+            batch_size=effective_batch_size,
             collate_fn=collate,
             shuffle=False)
 

@@ -61,8 +61,16 @@ def _load_classification_examples(label_path: str) -> List[Example]:
     raise ValueError('Unsupported label format: {}'.format(label_path))
 
 
-entity_dict = _setup_entity_dict()
-all_triplet_dict = get_all_triplet_dict()
+entity_dict = None
+all_triplet_dict = None
+
+
+def _ensure_eval_context() -> None:
+    global entity_dict, all_triplet_dict
+    if entity_dict is None:
+        entity_dict = _setup_entity_dict()
+    if all_triplet_dict is None:
+        all_triplet_dict = get_all_triplet_dict()
 
 
 @dataclass
@@ -161,7 +169,8 @@ def predict_by_split():
 
     predictor = BertPredictor()
     predictor.load(ckt_path=args.eval_model_path)
-    entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs)
+    _ensure_eval_context()
+    entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs, batch_size=512)
 
     # For link prediction in test mode, use unlabeled test.txt instead of labeled test_w_label.txt
     linkpred_eval_path = None
@@ -201,15 +210,16 @@ def predict_by_split():
 def eval_single_direction(predictor: BertPredictor,
                           entity_tensor: torch.tensor,
                           eval_forward=True,
-                          batch_size=256,
+                          batch_size=128,
                           eval_path=None) -> dict:
     start_time = time()
+    _ensure_eval_context()
     # Use provided eval_path or fall back to args.valid_path
     data_path = eval_path if eval_path else args.valid_path
     print(f"Evaluating {'forward' if eval_forward else 'backward'} direction using data from: {data_path}")
     examples = load_data(data_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
-    hr_tensor, _ = predictor.predict_by_examples(examples)
+    hr_tensor, _ = predictor.predict_by_examples(examples, batch_size=batch_size)
     hr_tensor = hr_tensor.to(entity_tensor.device)
     target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     logger.info('predict tensor done, compute metrics...')
