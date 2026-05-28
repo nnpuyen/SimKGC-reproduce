@@ -45,25 +45,27 @@ if [ -z "$DATA_DIR" ]; then
   DATA_DIR="${DIR}/data/${task}"
 fi
 
-test_path="${DATA_DIR}/test_w_label.txt.json"
+test_path="${DATA_DIR}/test.txt.json"
 if [ ! -f "${test_path}" ]; then
-  test_path="${DATA_DIR}/test_w_label.txt"
+  test_path="${DATA_DIR}/test.txt"
 fi
 
-neighbor_weight=0.05
+echo "eval.sh config: task=${task} model_path=${model_path} DATA_DIR=${DATA_DIR} test_path=${test_path} train_path=${DATA_DIR}/train.txt.json"
+
+# neighbor_weight=0.05
 # rerank_n_hop=2
 # if [ "${task}" = "WN18RR" ]; then
 # # WordNet is a sparse graph, use more neighbors for re-rank
 #   rerank_n_hop=5
-if [ "${task}" = "wiki5m_ind" ]; then
+# fi
+# if [ "${task}" = "wiki5m_ind" ]; then
 # for inductive setting of wiki5m, test nodes never appear in the training set
-  neighbor_weight=0.0
-fi
+#  neighbor_weight=0.0
+# fi
 
 python3 -u evaluate.py \
 --task "${task}" \
 --is-test \
 --eval-model-path "${model_path}" \
---neighbor-weight "${neighbor_weight}" \
 --train-path "${DATA_DIR}/train.txt.json" \
 --valid-path "${test_path}" "$@"

@@ -77,12 +77,32 @@ class BertPredictor:
         logger.info('Load model from {} successfully'.format(resolved_ckt_path))
 
     def _setup_args(self):
+        eval_override_keys = {
+            'train_path',
+            'valid_path',
+            'valid_label_path',
+            'eval_model_path',
+            'output_dir',
+            'model_dir',
+            'resume',
+            'resume_path',
+        }
+        eval_overrides = {k: args.__dict__.get(k) for k in eval_override_keys}
+
         for k, v in args.__dict__.items():
             if k not in self.train_args.__dict__:
                 logger.info('Set default attribute: {}={}'.format(k, v))
                 self.train_args.__dict__[k] = v
+
         logger.info('Args used in training: {}'.format(json.dumps(self.train_args.__dict__, ensure_ascii=False, indent=4)))
-        args.use_link_graph = self.train_args.use_link_graph
+
+        # Sync all checkpoint args into global args, then restore eval-specific overrides.
+        for k, v in self.train_args.__dict__.items():
+            args.__dict__[k] = v
+        for k, v in eval_overrides.items():
+            if v is not None and v != '':
+                args.__dict__[k] = v
+
         args.is_test = True
 
     @torch.no_grad()
