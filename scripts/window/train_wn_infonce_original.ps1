@@ -16,7 +16,7 @@ if (-not $dataDir) {
 $pythonArgs = @(
   '-u', 'main.py',
   '--model-dir', $outputDir,
-  '--pretrained-model', 'distilbert-base-uncased',
+  '--pretrained-model', 'bert-base-uncased',
   '--pooling', 'mean',
   '--lr', '5e-5',
   '--use-link-graph',
