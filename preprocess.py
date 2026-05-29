@@ -1,10 +1,13 @@
 import os
 import json
 import argparse
-import multiprocessing as mp
 
-from multiprocessing import Pool
 from typing import List
+
+if os.name == 'nt':
+    from multiprocessing.dummy import Pool
+else:
+    from multiprocessing import Pool
 
 parser = argparse.ArgumentParser(description='preprocess')
 parser.add_argument('--task', default='wn18rr', type=str, metavar='N',
@@ -18,8 +21,7 @@ parser.add_argument('--valid-path', default='', type=str, metavar='N',
 parser.add_argument('--test-path', default='', type=str, metavar='N',
                     help='path to valid data')
 
-args = parser.parse_args()
-mp.set_start_method('fork')
+args = None
 
 
 def _check_sanity(relation_id_to_str: dict):
@@ -290,6 +292,9 @@ def dump_all_entities(examples, out_path, id2text: dict):
 
 
 def main():
+    global args
+    args = parser.parse_args()
+
     all_examples = []
     for path in [args.train_path, args.valid_path, args.test_path]:
         assert os.path.exists(path)
