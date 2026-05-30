@@ -51,7 +51,7 @@ python3 -u main.py \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4 \
 --learnable-directau-uniformity-scale \
---log-uniformity-lr 1e-2 \
+--log-uniformity-lr 5e-5 \
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \
