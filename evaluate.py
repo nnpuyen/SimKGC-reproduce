@@ -239,7 +239,7 @@ def eval_single_direction(predictor: BertPredictor,
     print(f"Evaluating {'forward' if eval_forward else 'backward'} direction using data from: {data_path}")
     examples = load_data(data_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
-    hr_tensor, _ = predictor.predict_by_examples(examples, batch_size=batch_size)
+    hr_tensor, _ = predictor.predict_by_examples(examples, batch_size)
     hr_tensor = hr_tensor.to(entity_tensor.device)
     target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     logger.info('predict tensor done, compute metrics...')
