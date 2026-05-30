@@ -39,7 +39,7 @@ while [[ $# -ge 1 ]]; do
   esac
 done
 
-DIR="$( cd "$( dirname "$0" )" && cd .. && pwd )"
+DIR="$( cd "$( dirname "$0" )" && cd ../.. && pwd )"
 echo "working directory: ${DIR}"
 if [ -z "$DATA_DIR" ]; then
   DATA_DIR="${DIR}/data/${task}"

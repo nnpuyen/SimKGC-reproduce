@@ -3,7 +3,7 @@
 set -x
 set -e
 
-REPO_DIR="$( cd "$( dirname "$0" )" && cd .. && pwd )"
+REPO_DIR="$( cd "$( dirname "$0" )" && cd ../.. && pwd )"
 BASE_DIR="${REPO_DIR}/data/wikidata5m"
 mkdir -p ${BASE_DIR}
 

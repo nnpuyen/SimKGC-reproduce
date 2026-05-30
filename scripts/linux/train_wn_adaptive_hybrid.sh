@@ -8,7 +8,7 @@ set -e
 
 TASK="WN18RR"
 
-DIR="$( cd "$( dirname "$0" )" && cd .. && pwd )"
+DIR="$( cd "$( dirname "$0" )" && cd ../.. && pwd )"
 echo "working directory: ${DIR}"
 
 if [ -z "$OUTPUT_DIR" ]; then
