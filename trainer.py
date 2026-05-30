@@ -430,9 +430,29 @@ class Trainer:
 
         self._run_test_evaluation(epoch)
 
+        # Attempt to evaluate the best checkpoint after training completes.
+        # Prefer an explicit `model_best.mdl`, otherwise fall back to any checkpoint
+        # present in `self.args.model_dir` (newest by modification time).
         best_checkpoint = os.path.join(self.args.model_dir, 'model_best.mdl')
-        if self._load_model_weights(best_checkpoint):
-            self._run_test_evaluation(epoch, tag='best')
+        resolved_best = None
+        if os.path.exists(best_checkpoint):
+            resolved_best = best_checkpoint
+        else:
+            # _resolve_checkpoint_path returns '' when nothing found.
+            resolved = self._resolve_checkpoint_path(self.args.model_dir)
+            if resolved:
+                resolved_best = resolved
+
+        if not resolved_best:
+            logger.warning('No checkpoint found to evaluate as best in %s', self.args.model_dir)
+        else:
+            logger.info('Evaluating best checkpoint: %s', resolved_best)
+            if self._load_model_weights(resolved_best):
+                # _run_test_evaluation runs triple-classification and link-prediction tests
+                # (it writes both to logs and to files under model_dir).
+                self._run_test_evaluation(epoch, tag='best')
+            else:
+                logger.warning('Failed to load checkpoint %s for best evaluation', resolved_best)
         # # Link prediction evaluation on validation set after each epoch
         # valid_path = self.args.valid_path
         # if valid_path and os.path.exists(valid_path):

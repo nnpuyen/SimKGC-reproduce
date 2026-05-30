@@ -15,9 +15,24 @@ class AttrDict:
 
 def save_checkpoint(state: dict, is_best: bool, filename: str):
     torch.save(state, filename)
+    logger.info('Wrote checkpoint: %s', filename)
+    ck_dir = os.path.dirname(filename)
+    # Always update model_last.mdl
+    try:
+        last_path = os.path.join(ck_dir, 'model_last.mdl')
+        shutil.copyfile(filename, last_path)
+        logger.info('Updated model_last.mdl -> %s', last_path)
+    except Exception as exc:
+        logger.warning('Failed to update model_last.mdl: %s', exc)
+
+    # Update model_best.mdl when this is the best checkpoint
     if is_best:
-        shutil.copyfile(filename, os.path.dirname(filename) + '/model_best.mdl')
-    shutil.copyfile(filename, os.path.dirname(filename) + '/model_last.mdl')
+        try:
+            best_path = os.path.join(ck_dir, 'model_best.mdl')
+            shutil.copyfile(filename, best_path)
+            logger.info('Updated model_best.mdl -> %s', best_path)
+        except Exception as exc:
+            logger.warning('Failed to update model_best.mdl: %s', exc)
 
 
 def delete_old_ckt(path_pattern: str, keep=5):
