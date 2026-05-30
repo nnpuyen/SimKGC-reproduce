@@ -285,9 +285,17 @@ class Trainer:
             self.train_epoch(epoch)
             train_time += time.time() - epoch_train_start
 
-            val_start = time.time()
-            eval_result = self._run_eval(epoch=epoch)
-            val_time = time.time() - val_start
+            should_run_eval = ((epoch + 1) % self.args.eval_interval_epochs == 0) or (epoch == self.args.epochs - 1)
+
+            val_time = 0.0
+            eval_result = None
+            if should_run_eval:
+                val_start = time.time()
+                eval_result = self._run_eval(epoch=epoch)
+                val_time = time.time() - val_start
+            else:
+                logger.info('Skip validation at epoch {} (eval every {} epochs)'.format(
+                    epoch, self.args.eval_interval_epochs))
 
             valid_mrr = None
             is_best = False
@@ -295,7 +303,7 @@ class Trainer:
                 valid_mrr = eval_result.get('valid_mrr')
                 is_best = bool(eval_result.get('is_best', False))
 
-            if getattr(self.args, 'early_stop', False) and valid_mrr is not None:
+            if should_run_eval and getattr(self.args, 'early_stop', False) and valid_mrr is not None:
                 if is_best:
                     self.early_stop_wait = 0
                 else:
@@ -311,8 +319,8 @@ class Trainer:
                     )
                     break
 
-            # Evaluate MR, MRR, Hits@1/3/10 on valid set using current training model (no second model loaded)
-            if self.args.valid_path and self.args.model_dir:
+            # Optional expensive extra metrics, disabled by default for faster training
+            if should_run_eval and self.args.enable_extra_epoch_metrics and self.args.valid_path and self.args.model_dir:
                 from dict_hub import get_entity_dict
                 from doc import Example, Dataset
                 entity_dict = get_entity_dict()
@@ -384,7 +392,7 @@ class Trainer:
                     valid_label_path = self.args.valid_path
                 elif self.args.valid_path.endswith('.txt'):
                     valid_label_path = self.args.valid_path.replace('.txt', '_w_label.txt')
-            if valid_label_path and os.path.exists(valid_label_path):
+            if should_run_eval and self.args.enable_extra_epoch_metrics and valid_label_path and os.path.exists(valid_label_path):
                 # Đọc dữ liệu và label
                 from doc import load_data
                 valid_exs = load_data(valid_label_path, add_forward_triplet=False, add_backward_triplet=False)
@@ -695,7 +703,7 @@ class Trainer:
 
             # compute output
             if self.args.use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast(device_type='cuda'):
                     outputs = call_model_forward(self.model, batch_dict)
             else:
                 outputs = call_model_forward(self.model, batch_dict)
@@ -734,19 +742,24 @@ class Trainer:
 
             # compute gradient and do SGD step
             self.optimizer.zero_grad()
+            step_taken = True
             if self.args.use_amp:
+                prev_scale = self.scaler.get_scale()
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
                 gradnorm_meter.update(float(grad_norm), 1)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
+                step_taken = self.scaler.get_scale() >= prev_scale
             else:
                 loss.backward()
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
                 gradnorm_meter.update(float(grad_norm), 1)
                 self.optimizer.step()
-            self.scheduler.step()
+
+            if step_taken:
+                self.scheduler.step()
 
             if i % self.args.print_freq == 0:
                 progress.display(i)

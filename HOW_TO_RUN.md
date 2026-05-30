@@ -7,6 +7,7 @@ This document explains how to run the full pipeline on Windows using the PowerSh
 - Python 3.8+ installed and on PATH.
 - Git and network access to download datasets (if needed).
 - (Optional) GPU + CUDA if you plan to use CUDA builds of PyTorch.
+- The Windows helper scripts in `scripts/window` prefer `.\.venv\Scripts\python.exe` when it exists in the repository root, so they use the workspace environment even if a different global Python is installed.
 
 **1. Create and activate a virtual environment**
 

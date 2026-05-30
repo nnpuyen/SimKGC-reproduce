@@ -103,6 +103,10 @@ parser.add_argument('--use-link-graph', action='store_true',
                     help='use neighbors from link graph as context')
 parser.add_argument('--eval-every-n-step', default=10000, type=int,
                     help='evaluate every n steps')
+parser.add_argument('--eval-interval-epochs', default=1, type=int,
+                    help='run validation every N epochs (always runs on last epoch)')
+parser.add_argument('--enable-extra-epoch-metrics', action='store_true', default=False,
+                    help='enable additional expensive per-epoch validation metrics')
 parser.add_argument('--pre-batch', default=0, type=int,
                     help='number of pre-batch used for negatives')
 parser.add_argument('--pre-batch-weight', default=0.5, type=float,
@@ -222,6 +226,7 @@ assert args.bridge_gamma >= 0
 assert args.bridge_beta > 0
 assert args.bridge_gamma_warmup_epochs >= 0
 assert args.chunk_size > 0
+assert args.eval_interval_epochs > 0
 
 if not args.model_dir and not args.output_dir:
     assert os.path.exists(args.eval_model_path), 'One of args.model_dir and args.eval_model_path should be valid path'
