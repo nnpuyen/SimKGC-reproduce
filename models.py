@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from dataclasses import dataclass
 from transformers import AutoModel, AutoConfig
@@ -17,12 +18,19 @@ class DirectAULoss(nn.Module):
     def __init__(self, alpha: float = 1.0, gamma: float = 1.0, eps: float = 1e-12,
                  uniformity_scale: float = 4.0, use_alignment: bool = True, use_uniformity: bool = True,
                  use_uniformity_query: bool = True, use_uniformity_tail: bool = True,
-                 use_uniformity_head: bool = False, use_uniformity_entity: bool = False):
+                 use_uniformity_head: bool = False, use_uniformity_entity: bool = False,
+                 learnable_uniformity_scale: bool = False):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.eps = eps
-        self.uniformity_scale = uniformity_scale
+        # Support an optional learnable uniformity scale via re-parameterization
+        # If learnable_uniformity_scale is True, we store log(scale) as an nn.Parameter
+        # and expose a `uniformity_scale` property that returns exp(log_scale).
+        if learnable_uniformity_scale:
+            self.log_uniformity_scale = nn.Parameter(torch.tensor(math.log(float(uniformity_scale))))
+        else:
+            self._uniformity_scale = float(uniformity_scale)
         self.use_alignment = use_alignment
         self.use_uniformity = use_uniformity
         self.use_uniformity_query = use_uniformity_query
@@ -100,11 +108,28 @@ class DirectAULoss(nn.Module):
         pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
         pairwise_dists = pairwise_dists[pairwise_mask]
 
-        exp_term = torch.exp(-self.uniformity_scale * pairwise_dists ** 2)
+        scale = self.uniformity_scale
+        # `scale` may be a python float or a torch tensor; ensure correct dtype for computation
+        exp_term = torch.exp(-scale * pairwise_dists ** 2)
         mean_exp = torch.mean(exp_term)
 
         uniform_loss = torch.log(mean_exp + self.eps)
         return uniform_loss
+
+    @property
+    def uniformity_scale(self):
+        if hasattr(self, 'log_uniformity_scale'):
+            return torch.exp(self.log_uniformity_scale)
+        return self._uniformity_scale
+
+    @uniformity_scale.setter
+    def uniformity_scale(self, value):
+        # Allow external callers (e.g., scheduler) to assign a float value.
+        if hasattr(self, 'log_uniformity_scale'):
+            with torch.no_grad():
+                self.log_uniformity_scale.data.fill_(math.log(float(value)))
+        else:
+            self._uniformity_scale = float(value)
 
     def _compute_uniform_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
                               batch_size: int, batch_exs: list = None,

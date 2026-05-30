@@ -119,18 +119,43 @@ class Trainer:
                     use_uniformity_tail=bool(getattr(self.args, 'uniformity_on_tail', True)),
                     use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
                     use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
+                    learnable_uniformity_scale=getattr(self.args, 'learnable_directau_uniformity_scale', False),
                 ).cuda()
         else:
             self.auxiliary_loss = None
 
-        optimizer_params = [p for p in self.model.parameters() if p.requires_grad]
+        # Build optimizer parameter groups. Put model + auxiliary params in the base group,
+        # and (optionally) the learnable log-uniformity-scale in its own group with a
+        # separate learning rate and no weight decay.
+        base_params = [p for p in self.model.parameters() if p.requires_grad]
+        aux_other_params = []
+        log_uniformity_param = None
         if self.auxiliary_loss is not None:
-            aux_params = [p for p in self.auxiliary_loss.parameters() if p.requires_grad]
-            if aux_params:
-                optimizer_params += aux_params
-        self.optimizer = AdamW(optimizer_params,
-                               lr=args.lr,
-                               weight_decay=args.weight_decay)
+            for name, p in self.auxiliary_loss.named_parameters():
+                if not p.requires_grad:
+                    continue
+                if name == 'log_uniformity_scale' or name.endswith('.log_uniformity_scale'):
+                    log_uniformity_param = p
+                else:
+                    aux_other_params.append(p)
+
+        param_groups = []
+        # Base group: model parameters + other auxiliary params
+        base_group_params = base_params + aux_other_params
+        if base_group_params:
+            param_groups.append({'params': base_group_params, 'lr': args.lr, 'weight_decay': args.weight_decay})
+
+        # Optional special group for log_uniformity_scale
+        if log_uniformity_param is not None:
+            per_param_lr = getattr(args, 'log_uniformity_lr', args.lr)
+            param_groups.append({'params': [log_uniformity_param], 'lr': per_param_lr, 'weight_decay': 0.0})
+
+        # Fall back to single-group optimizer if something unexpected happened
+        if not param_groups:
+            optimizer_params = [p for p in self.model.parameters() if p.requires_grad]
+            self.optimizer = AdamW(optimizer_params, lr=args.lr, weight_decay=args.weight_decay)
+        else:
+            self.optimizer = AdamW(param_groups)
         report_num_trainable_parameters(self.model)
 
         # tracking fields for loss components
@@ -280,14 +305,30 @@ class Trainer:
 
         for epoch in range(self.start_epoch, self.args.epochs):
             self._maybe_update_uniformity_scale(epoch)
+            current_uniformity_scale = None
+            if self.auxiliary_loss is not None and hasattr(self.auxiliary_loss, 'uniformity_scale'):
+                current_uniformity_scale = self.auxiliary_loss.uniformity_scale
+                try:
+                    current_uniformity_scale = float(current_uniformity_scale.detach().cpu().item()) if torch.is_tensor(current_uniformity_scale) else float(current_uniformity_scale)
+                except Exception:
+                    current_uniformity_scale = current_uniformity_scale
+                logger.info('Epoch {} uniformity scale: {}'.format(epoch, current_uniformity_scale))
             epoch_train_start = time.time()
             # train for one epoch
             self.train_epoch(epoch)
             train_time += time.time() - epoch_train_start
 
-            val_start = time.time()
-            eval_result = self._run_eval(epoch=epoch)
-            val_time = time.time() - val_start
+            should_run_eval = ((epoch + 1) % self.args.eval_interval_epochs == 0) or (epoch == self.args.epochs - 1)
+
+            val_time = 0.0
+            eval_result = None
+            if should_run_eval:
+                val_start = time.time()
+                eval_result = self._run_eval(epoch=epoch)
+                val_time = time.time() - val_start
+            else:
+                logger.info('Skip validation at epoch {} (eval every {} epochs)'.format(
+                    epoch, self.args.eval_interval_epochs))
 
             valid_mrr = None
             is_best = False
@@ -295,7 +336,7 @@ class Trainer:
                 valid_mrr = eval_result.get('valid_mrr')
                 is_best = bool(eval_result.get('is_best', False))
 
-            if getattr(self.args, 'early_stop', False) and valid_mrr is not None:
+            if should_run_eval and getattr(self.args, 'early_stop', False) and valid_mrr is not None:
                 if is_best:
                     self.early_stop_wait = 0
                 else:
@@ -311,8 +352,8 @@ class Trainer:
                     )
                     break
 
-            # Evaluate MR, MRR, Hits@1/3/10 on valid set using current training model (no second model loaded)
-            if self.args.valid_path and self.args.model_dir:
+            # Optional expensive extra metrics, disabled by default for faster training
+            if should_run_eval and self.args.enable_extra_epoch_metrics and self.args.valid_path and self.args.model_dir:
                 from dict_hub import get_entity_dict
                 from doc import Example, Dataset
                 entity_dict = get_entity_dict()
@@ -378,6 +419,8 @@ class Trainer:
                 print(log_str)
                 logger.info(log_str)
                 with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
+                    if current_uniformity_scale is not None:
+                        f.write(f"[EPOCH {epoch}] Uniformity scale: {current_uniformity_scale}\n")
                     f.write(log_str + '\n')
 
             # Evaluate triple classification metrics on a separate labeled validation file.
@@ -387,7 +430,7 @@ class Trainer:
                     valid_label_path = self.args.valid_path
                 elif self.args.valid_path.endswith('.txt'):
                     valid_label_path = self.args.valid_path.replace('.txt', '_w_label.txt')
-            if valid_label_path and os.path.exists(valid_label_path):
+            if should_run_eval and self.args.enable_extra_epoch_metrics and valid_label_path and os.path.exists(valid_label_path):
                 # Đọc dữ liệu và label
                 from doc import load_data
                 valid_exs = load_data(valid_label_path, add_forward_triplet=False, add_backward_triplet=False)
@@ -422,6 +465,8 @@ class Trainer:
                 print(log_cls)
                 logger.info(log_cls)
                 with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
+                    if current_uniformity_scale is not None:
+                        f.write(f"[EPOCH {epoch}] Uniformity scale: {current_uniformity_scale}\n")
                     f.write(log_thresh + '\n')
                     f.write(log_cls + '\n')
 
@@ -718,7 +763,7 @@ class Trainer:
 
             # compute output
             if self.args.use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast(device_type='cuda'):
                     outputs = call_model_forward(self.model, batch_dict)
             else:
                 outputs = call_model_forward(self.model, batch_dict)
@@ -757,19 +802,24 @@ class Trainer:
 
             # compute gradient and do SGD step
             self.optimizer.zero_grad()
+            step_taken = True
             if self.args.use_amp:
+                prev_scale = self.scaler.get_scale()
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
                 gradnorm_meter.update(float(grad_norm), 1)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
+                step_taken = self.scaler.get_scale() >= prev_scale
             else:
                 loss.backward()
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
                 gradnorm_meter.update(float(grad_norm), 1)
                 self.optimizer.step()
-            self.scheduler.step()
+
+            if step_taken:
+                self.scheduler.step()
 
             if i % self.args.print_freq == 0:
                 progress.display(i)

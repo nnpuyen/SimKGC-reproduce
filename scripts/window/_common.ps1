@@ -80,3 +80,17 @@ function Get-ExistingFile {
 
   return $null
 }
+
+function Get-PythonExecutable {
+  $repoRoot = Get-RepoRoot
+  $venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
+  if (Test-Path $venvPython) {
+    return $venvPython
+  }
+
+  return 'python'
+}
+
+function python {
+  & (Get-PythonExecutable) @args
+}
