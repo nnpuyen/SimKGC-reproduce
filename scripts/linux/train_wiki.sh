@@ -9,7 +9,7 @@ if [[ $# -ge 1 && ! "$1" == "--"* ]]; then
     shift
 fi
 
-DIR="$( cd "$( dirname "$0" )" && cd .. && pwd )"
+DIR="$( cd "$( dirname "$0" )" && cd ../.. && pwd )"
 echo "working directory: ${DIR}"
 
 if [ -z "$OUTPUT_DIR" ]; then

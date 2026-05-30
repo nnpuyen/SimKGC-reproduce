@@ -356,13 +356,16 @@ class Trainer:
                         self.task = task
                         self.batch_size = batch_size
                     
-                    def predict_by_examples(self, examples):
+                    def predict_by_examples(self, examples, batch_size=None, **kwargs):
                         self.model.eval()
                         with torch.no_grad():
+                            if batch_size is None:
+                                batch_size = kwargs.get('batch_size')
+                            effective_batch_size = max(batch_size or self.batch_size, 512)
                             data_loader = torch.utils.data.DataLoader(
                                 Dataset(path='', examples=examples, task=self.task),
                                 num_workers=0,
-                                batch_size=max(self.batch_size, 512),
+                                batch_size=effective_batch_size,
                                 collate_fn=collate,
                                 shuffle=False)
                             hr_tensor_list, tail_tensor_list = [], []
