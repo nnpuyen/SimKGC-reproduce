@@ -120,6 +120,7 @@ class Trainer:
                     use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
                     use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
                     learnable_uniformity_scale=getattr(self.args, 'learnable_directau_uniformity_scale', False),
+                    use_uniformity_as_alignment=getattr(self.args, 'directau_use_uniformity_alpha', False),
                 ).cuda()
         else:
             self.auxiliary_loss = None

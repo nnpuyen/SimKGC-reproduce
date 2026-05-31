@@ -73,6 +73,8 @@ parser.add_argument('--directau-uniformity-scale', default=4.0, type=float, meta
                     help='scale factor for DirectAU uniformity exp term')
 parser.add_argument('--learnable-directau-uniformity-scale', action='store_true',
                     help='make DirectAU uniformity scale learnable (re-parameterized log-scale)')
+parser.add_argument('--directau-use-uniformity-alpha', action='store_true',
+                    help='use learned DirectAU uniformity scale as alignment alpha (instead of fixed --directau-alpha)')
 parser.add_argument('--log-uniformity-lr', default=1e-2, type=float,
                     help='learning rate for learnable DirectAU log-uniformity-scale parameter')
 parser.add_argument('--linear-schedule', action='store_true',

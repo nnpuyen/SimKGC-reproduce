@@ -1,16 +1,7 @@
 #!/usr/bin/env bash
 
-# Training script for Mode 011: InfoNCE + Negative Sampling + Uniformity Loss
-# 
-# All 8 supported training modes:
-# Mode 000: --loss-type infonce (pairwise, no uniformity)
-# Mode 001: --loss-type infonce --use-uniformity-loss
-# Mode 010: --loss-type infonce --use-negative-sampling (standard InfoNCE)
-# Mode 011: --loss-type infonce --use-negative-sampling --use-uniformity-loss (THIS SCRIPT)
-# Mode 100: --loss-type alignment (pure alignment)
-# Mode 101: --loss-type alignment --use-uniformity-loss (DirectAU traditional)
-# Mode 110: --loss-type alignment --use-negative-sampling
-# Mode 111: --loss-type alignment --use-negative-sampling --use-uniformity-loss
+# Training script: alignment loss with fixed DirectAU alpha and learnable uniformity scale
+# Based on train_wn_alignment_uniformity_learnable_uniformity_scale.sh
 
 set -x
 set -e
@@ -21,7 +12,7 @@ DIR="$( cd "$( dirname "$0" )" && cd ../.. && pwd )"
 echo "working directory: ${DIR}"
 
 if [ -z "$OUTPUT_DIR" ]; then
-  OUTPUT_DIR="${DIR}/checkpoint/${TASK}_mode011_$(date +%F-%H%M.%S)"
+  OUTPUT_DIR="${DIR}/checkpoint/${TASK}_mode011_fixed_alpha_learnable_scale_$(date +%F-%H%M.%S)"
 fi
 if [ -z "$DATA_DIR" ]; then
   DATA_DIR="${DIR}/data/${TASK}"
@@ -51,7 +42,7 @@ python3 -u main.py \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4 \
 --learnable-directau-uniformity-scale \
---log-uniformity-lr 1e-5 \
+--log-uniformity-lr 5e-5 \
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \

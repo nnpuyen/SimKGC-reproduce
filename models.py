@@ -19,7 +19,8 @@ class DirectAULoss(nn.Module):
                  uniformity_scale: float = 4.0, use_alignment: bool = True, use_uniformity: bool = True,
                  use_uniformity_query: bool = True, use_uniformity_tail: bool = True,
                  use_uniformity_head: bool = False, use_uniformity_entity: bool = False,
-                 learnable_uniformity_scale: bool = False):
+                 learnable_uniformity_scale: bool = False,
+                 use_uniformity_as_alignment: bool = False):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -37,6 +38,7 @@ class DirectAULoss(nn.Module):
         self.use_uniformity_tail = use_uniformity_tail
         self.use_uniformity_head = use_uniformity_head
         self.use_uniformity_entity = use_uniformity_entity
+        self.use_uniformity_as_alignment = use_uniformity_as_alignment
     
     def forward(self, hr_vector: torch.tensor, tail_vector: torch.tensor,
                 labels: torch.tensor = None, batch_exs: list = None,
@@ -70,9 +72,12 @@ class DirectAULoss(nn.Module):
             'entity': torch.tensor(0.0, device=hr_vector.device),
         }
         uniform_loss = uniform_components['total']
-        # When uniformity scale is learnable, override alpha dynamically so
-        # alignment uses the same learned scale.
-        align_scale = self.uniformity_scale if hasattr(self, 'log_uniformity_scale') else self.alpha
+        # Determine alignment scaling: either fixed `alpha` or (optionally)
+        # reuse the uniformity scale as the alignment multiplier.
+        if self.use_uniformity_as_alignment:
+            align_scale = self.uniformity_scale if hasattr(self, 'log_uniformity_scale') else self.alpha
+        else:
+            align_scale = self.alpha
         scaled_align = align_scale * align_loss
         scaled_uniform = self.gamma * uniform_loss
         total_loss = scaled_align + scaled_uniform
