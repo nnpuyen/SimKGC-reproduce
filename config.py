@@ -87,6 +87,12 @@ parser.add_argument('--linear-schedule-start-epoch', default=0, type=int, metava
                     help='epoch index to start linear schedule (0-based)')
 parser.add_argument('--linear-schedule-epochs', default=0, type=int, metavar='N',
                     help='number of epochs to schedule over (0 means until total epochs)')
+parser.add_argument('--directau-piecewise', action='store_true',
+                    help='enable piecewise DirectAU schedule (phased alpha/uniformity)')
+parser.add_argument('--directau-piecewise-phases', default='15,15,20', type=str,
+                    help='comma-separated phase lengths for piecewise schedule (e.g. "15,15,20")')
+parser.add_argument('--directau-piecewise-values', default='4.5,5.5,6.5', type=str,
+                    help='comma-separated alpha/uniformity values per phase (e.g. "4.5,5.5,6.5")')
 parser.add_argument('--directau-uniformity-scale-1', default=4.0, type=float, metavar='N',
                     help='scale factor for static-hybrid uniformity term 1')
 parser.add_argument('--directau-uniformity-scale-2', default=6.0, type=float, metavar='N',

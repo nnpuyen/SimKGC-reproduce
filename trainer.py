@@ -849,6 +849,70 @@ class Trainer:
             assert False, 'Unknown lr scheduler: {}'.format(self.args.scheduler)
 
     def _maybe_update_uniformity_scale(self, epoch: int) -> None:
+        # Piecewise schedule: run independently of linear schedule when enabled.
+        if getattr(self.args, 'directau_piecewise', False):
+            if self.auxiliary_loss is None:
+                return
+
+            # Parse phase lengths and values
+            try:
+                phase_lengths = [int(x) for x in str(self.args.directau_piecewise_phases).split(',') if x.strip()]
+                phase_values = [float(x) for x in str(self.args.directau_piecewise_values).split(',') if x.strip()]
+            except Exception:
+                logger.warning('Failed to parse piecewise phases/values; skip piecewise schedule')
+                return
+
+            if len(phase_lengths) != len(phase_values) or len(phase_lengths) == 0:
+                logger.warning('Piecewise phases and values length mismatch or empty; skip piecewise schedule')
+                return
+
+            # Build cumulative epoch ranges
+            cum = []
+            s = 0
+            for L in phase_lengths:
+                cum.append((s, s + L - 1))
+                s += L
+
+            # Find current phase index
+            phase_idx = None
+            for idx, (start_e, end_e) in enumerate(cum):
+                if epoch >= start_e and epoch <= end_e:
+                    phase_idx = idx
+                    break
+            # If past all phases, use last phase
+            if phase_idx is None:
+                phase_idx = len(phase_lengths) - 1
+
+            val = phase_values[phase_idx]
+
+            # Apply to auxiliary loss depending on its type. Only update uniformity scale
+            # and alignment alpha — do NOT touch gamma here.
+            try:
+                aux = self.auxiliary_loss
+                # DirectAULoss
+                if hasattr(aux, 'uniformity_scale'):
+                    aux.uniformity_scale = float(val)
+                # static/adaptive hybrids have separate fields
+                if hasattr(aux, 'uniformity_scale1'):
+                    aux.uniformity_scale1 = float(val)
+                if hasattr(aux, 'uniformity_scale2'):
+                    aux.uniformity_scale2 = float(val)
+
+                # Update alignment alpha only
+                if hasattr(aux, 'alpha'):
+                    aux.alpha = float(val)
+                if hasattr(aux, 'align_alpha'):
+                    aux.align_alpha = float(val)
+
+                # Update args for logging/consistency
+                self.args.directau_alpha = float(val)
+                self.args.directau_uniformity_scale = float(val)
+                logger.info('Piecewise schedule applied at epoch {}: alpha/uniformity={}'.format(epoch, val))
+            except Exception as exc:
+                logger.warning('Failed to apply piecewise schedule: {}'.format(exc))
+            return
+
+        # Fallback: legacy linear schedule behavior
         if not getattr(self.args, 'linear_schedule', False):
             return
 
