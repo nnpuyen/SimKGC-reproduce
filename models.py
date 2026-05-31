@@ -70,7 +70,10 @@ class DirectAULoss(nn.Module):
             'entity': torch.tensor(0.0, device=hr_vector.device),
         }
         uniform_loss = uniform_components['total']
-        scaled_align = self.alpha * align_loss
+        # When uniformity scale is learnable, override alpha dynamically so
+        # alignment uses the same learned scale.
+        align_scale = self.uniformity_scale if hasattr(self, 'log_uniformity_scale') else self.alpha
+        scaled_align = align_scale * align_loss
         scaled_uniform = self.gamma * uniform_loss
         total_loss = scaled_align + scaled_uniform
 
