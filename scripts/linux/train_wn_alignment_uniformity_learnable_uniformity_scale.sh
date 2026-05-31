@@ -52,7 +52,7 @@ python3 -u main.py \
 --directau-uniformity-scale 4.5 \
 --learnable-directau-uniformity-scale \
 --directau-use-uniformity-alpha \
---log-uniformity-lr 5e-5 \
+--log-uniformity-lr 8e-5 \
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \
