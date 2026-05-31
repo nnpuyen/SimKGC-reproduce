@@ -46,12 +46,13 @@ python3 -u main.py \
 --loss-type alignment \
 --uniformity-on-query \
 --uniformity-on-tail \
---directau-alpha 3 \
+--directau-alpha 1 \
 --directau-gamma 1 \
 --directau-eps 1e-12 \
---directau-uniformity-scale 4 \
+--directau-uniformity-scale 4.5 \
 --learnable-directau-uniformity-scale \
---log-uniformity-lr 1e-5 \
+--directau-use-uniformity-alpha \
+--log-uniformity-lr 5e-5 \
 --no-negative-sampling \
 --epochs 50 \
 --workers 2 \
