@@ -67,6 +67,8 @@ parser.add_argument('--directau-alpha', default=3.0, type=float, metavar='N',
                     help='weight for DirectAU alignment loss')
 parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
                     help='weight for DirectAU uniformity loss')
+parser.add_argument('--directau-gamma-cross', default=None, type=float, metavar='N',
+                    help='weight for cross-uniformity term (default: --directau-gamma, or --bridge-gamma in bridge mode)')
 parser.add_argument('--directau-gamma-1', default=0.5, type=float, metavar='N',
                     help='weight for static-hybrid uniformity loss term 1')
 parser.add_argument('--directau-gamma-2', default=0.5, type=float, metavar='N',
@@ -248,7 +250,14 @@ if args.cross_uniformity_beta is None:
     else:
         args.cross_uniformity_beta = args.directau_uniformity_scale
 
+if args.directau_gamma_cross is None:
+    if args.loss_type == 'bridge':
+        args.directau_gamma_cross = args.bridge_gamma
+    else:
+        args.directau_gamma_cross = args.directau_gamma
+
 assert args.directau_gamma >= 0
+assert args.directau_gamma_cross >= 0
 assert args.directau_gamma_1 >= 0
 assert args.directau_gamma_2 >= 0
 assert args.directau_alpha >= 0

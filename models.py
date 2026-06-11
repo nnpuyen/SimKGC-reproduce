@@ -20,11 +20,13 @@ class DirectAULoss(nn.Module):
                  use_uniformity_query: bool = True, use_uniformity_tail: bool = True,
                  use_uniformity_head: bool = False, use_uniformity_entity: bool = False,
                  use_uniformity_cross: bool = False, cross_uniformity_beta: float = None,
+                 gamma_cross: float = None,
                  learnable_uniformity_scale: bool = False,
                  use_uniformity_as_alignment: bool = False):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.gamma_cross = gamma if gamma_cross is None else gamma_cross
         self.eps = eps
         self.cross_uniformity_beta = cross_uniformity_beta
         # Support an optional learnable uniformity scale via re-parameterization
@@ -76,7 +78,7 @@ class DirectAULoss(nn.Module):
             'entity': torch.tensor(0.0, device=hr_vector.device),
             'cross': torch.tensor(0.0, device=hr_vector.device),
         }
-        uniform_loss = uniform_components['total']
+        uniform_loss = uniform_components['total'] + uniform_components['cross']
         # Determine alignment scaling: either fixed `alpha` or (optionally)
         # reuse the uniformity scale as the alignment multiplier.
         if self.use_uniformity_as_alignment:
@@ -84,7 +86,9 @@ class DirectAULoss(nn.Module):
         else:
             align_scale = self.alpha
         scaled_align = align_scale * align_loss
-        scaled_uniform = self.gamma * uniform_loss
+        scaled_intra = self.gamma * uniform_components['total']
+        scaled_cross = self.gamma_cross * uniform_components['cross']
+        scaled_uniform = scaled_intra + scaled_cross
         total_loss = scaled_align + scaled_uniform
 
         return {
@@ -102,7 +106,7 @@ class DirectAULoss(nn.Module):
             'uniform_loss_tail_scaled': (self.gamma * uniform_components['tail']).detach(),
             'uniform_loss_head_scaled': (self.gamma * uniform_components['head']).detach(),
             'uniform_loss_entity_scaled': (self.gamma * uniform_components['entity']).detach(),
-            'uniform_loss_cross_scaled': (self.gamma * uniform_components['cross']).detach(),
+            'uniform_loss_cross_scaled': (self.gamma_cross * uniform_components['cross']).detach(),
         }
     
     def _compute_align_loss(self, hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
@@ -234,7 +238,6 @@ class DirectAULoss(nn.Module):
 
         if self.use_uniformity_cross:
             cross_uniform_loss = self._compute_cross_uniformity_loss(hr_vector, tail_vector, triplet_mask)
-            total_uniform_loss = total_uniform_loss + cross_uniform_loss
 
         if self.use_uniformity_head and head_vector is not None:
             if batch_exs is not None:
@@ -293,11 +296,14 @@ class StaticHybridDirectAULoss(nn.Module):
                  use_alignment: bool = True, use_uniformity: bool = True,
                  use_uniformity_query: bool = True, use_uniformity_tail: bool = True,
                  use_uniformity_head: bool = False, use_uniformity_entity: bool = False,
-                 use_uniformity_cross: bool = False, cross_uniformity_beta: float = None):
+                 use_uniformity_cross: bool = False, cross_uniformity_beta: float = None,
+                 gamma_cross: float = None):
         super().__init__()
         self.alpha = alpha
         self.gamma1 = gamma1
         self.gamma2 = gamma2
+        default_gamma_cross = (gamma1 + gamma2) / 2.0
+        self.gamma_cross = default_gamma_cross if gamma_cross is None else gamma_cross
         self.eps = eps
         self.uniformity_scale1 = uniformity_scale1
         self.uniformity_scale2 = uniformity_scale2
@@ -340,12 +346,11 @@ class StaticHybridDirectAULoss(nn.Module):
 
         uniform_loss_1 = uniform_components_1['total']
         uniform_loss_2 = uniform_components_2['total']
-        cross_gamma = (self.gamma1 + self.gamma2) / 2.0
 
         scaled_align = self.alpha * align_loss
         scaled_uniform_1 = self.gamma1 * uniform_loss_1
         scaled_uniform_2 = self.gamma2 * uniform_loss_2
-        scaled_cross = cross_gamma * cross_uniform_loss
+        scaled_cross = self.gamma_cross * cross_uniform_loss
         total_loss = scaled_align + scaled_uniform_1 + scaled_uniform_2 + scaled_cross
 
         return {
@@ -518,13 +523,15 @@ class AdaptiveHybridDirectAULoss(nn.Module):
                  use_alignment: bool = True, use_uniformity: bool = True,
                  use_uniformity_query: bool = True, use_uniformity_tail: bool = True,
                  use_uniformity_head: bool = False, use_uniformity_entity: bool = False,
-                 use_uniformity_cross: bool = False, cross_uniformity_beta: float = None):
+                 use_uniformity_cross: bool = False, cross_uniformity_beta: float = None,
+                 gamma_cross: float = None):
         super().__init__()
         alpha_init = float(alpha_init)
         alpha_init = min(max(alpha_init, 1e-6), 1.0 - 1e-6)
         self.alpha_logit = nn.Parameter(torch.log(torch.tensor(alpha_init / (1.0 - alpha_init))))
         self.align_alpha = align_alpha
         self.gamma = gamma
+        self.gamma_cross = gamma if gamma_cross is None else gamma_cross
         self.eps = eps
         self.uniformity_scale1 = uniformity_scale1
         self.uniformity_scale2 = uniformity_scale2
@@ -571,10 +578,13 @@ class AdaptiveHybridDirectAULoss(nn.Module):
         alpha = self._alpha()
         uniform_loss_1 = uniform_components_1['total']
         uniform_loss_2 = uniform_components_2['total']
-        uniform_loss = alpha * uniform_loss_1 + (1.0 - alpha) * uniform_loss_2 + cross_uniform_loss
+        intra_uniform_loss = alpha * uniform_loss_1 + (1.0 - alpha) * uniform_loss_2
+        uniform_loss = intra_uniform_loss + cross_uniform_loss
 
         scaled_align = self.align_alpha * align_loss
-        scaled_uniform = self.gamma * uniform_loss
+        scaled_intra = self.gamma * intra_uniform_loss
+        scaled_cross = self.gamma_cross * cross_uniform_loss
+        scaled_uniform = scaled_intra + scaled_cross
         total_loss = scaled_align + scaled_uniform
 
         return {
@@ -596,7 +606,7 @@ class AdaptiveHybridDirectAULoss(nn.Module):
             'uniform_loss_tail_scaled': (self.gamma * (uniform_components_1['tail'] + uniform_components_2['tail'])).detach(),
             'uniform_loss_head_scaled': (self.gamma * (uniform_components_1['head'] + uniform_components_2['head'])).detach(),
             'uniform_loss_entity_scaled': (self.gamma * (uniform_components_1['entity'] + uniform_components_2['entity'])).detach(),
-            'uniform_loss_cross_scaled': (self.gamma * cross_uniform_loss).detach(),
+            'uniform_loss_cross_scaled': (self.gamma_cross * cross_uniform_loss).detach(),
             'uniform_alpha': alpha.detach(),
         }
 

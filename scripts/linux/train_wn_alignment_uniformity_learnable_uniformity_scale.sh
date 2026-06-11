@@ -46,8 +46,10 @@ python3 -u main.py \
 --loss-type alignment \
 --uniformity-on-query \
 --uniformity-on-tail \
+--uniformity-on-cross \
 --directau-alpha 1 \
---directau-gamma 1 \
+--directau-gamma 0.5 \
+--directau-gamma-cross 1 \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4.5 \
 --learnable-directau-uniformity-scale \
@@ -57,3 +59,4 @@ python3 -u main.py \
 --epochs 50 \
 --workers 2 \
 --max-to-keep 3 "$@"
+--use-negative-sampling \

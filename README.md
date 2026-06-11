@@ -230,10 +230,11 @@ python main.py ... --loss-type alignment --use-negative-sampling --use-uniformit
 - `--uniformity-on-entity`: Spread unique head+tail entity embeddings
 - `--uniformity-on-cross`: Cross-uniformity — push queries away from negative tail entities (requires negative sampling)
 
-Total auxiliary loss: `L = L_align + γ (L_unif^q + L_unif^tail + L_unif^head + L_unif^entity + L_cross)`.
+Total auxiliary loss: `L = L_align + γ (L_unif^q + L_unif^tail + L_unif^head + L_unif^entity) + γ_cross L_cross`.
 
 Cross-uniformity scale:
 - `--cross-uniformity-beta`: Distance scale inside the cross-uniformity term (default: `--directau-uniformity-scale`)
+- `--directau-gamma-cross`: Weight λ₃ for cross-uniformity (default: `--directau-gamma`, or `--bridge-gamma` in bridge mode)
 
 ### Bridged Loss
 

@@ -73,8 +73,14 @@ class Trainer:
         if self.use_alignment_loss or self.use_uniformity_loss:
             use_uniformity_cross = bool(getattr(self.args, 'uniformity_on_cross', False))
             cross_uniformity_beta = getattr(self.args, 'cross_uniformity_beta', None)
-            directau_alpha = getattr(self.args, 'bridge_alpha', 1.0) if self.use_bridge_loss else getattr(self.args, 'directau_alpha', 1.0)
-            directau_gamma = getattr(self.args, 'bridge_gamma', 1.0) if self.use_bridge_loss else getattr(self.args, 'directau_gamma', 1.0)
+            directau_gamma = getattr(self.args, 'directau_gamma', 1.0)
+            directau_gamma_cross = getattr(self.args, 'directau_gamma_cross', directau_gamma)
+            if self.use_bridge_loss:
+                directau_alpha = getattr(self.args, 'bridge_alpha', 1.0)
+                if getattr(self.args, 'directau_gamma_cross', None) is None:
+                    directau_gamma_cross = getattr(self.args, 'bridge_gamma', 1.0)
+            else:
+                directau_alpha = getattr(self.args, 'directau_alpha', 1.0)
             use_uniformity_query = False if self.use_bridge_loss else bool(getattr(self.args, 'uniformity_on_query', True))
             use_uniformity_tail = False if self.use_bridge_loss else bool(getattr(self.args, 'uniformity_on_tail', True))
             use_uniformity_head = False if self.use_bridge_loss else bool(getattr(self.args, 'uniformity_on_head', False))
@@ -95,6 +101,7 @@ class Trainer:
                     use_uniformity_entity=use_uniformity_entity,
                     use_uniformity_cross=use_uniformity_cross,
                     cross_uniformity_beta=cross_uniformity_beta,
+                    gamma_cross=directau_gamma_cross,
                 ).cuda()
             elif self.use_static_hybrid:
                 self.auxiliary_loss = StaticHybridDirectAULoss(
@@ -112,6 +119,7 @@ class Trainer:
                     use_uniformity_entity=use_uniformity_entity,
                     use_uniformity_cross=use_uniformity_cross,
                     cross_uniformity_beta=cross_uniformity_beta,
+                    gamma_cross=directau_gamma_cross,
                 ).cuda()
             else:
                 self.auxiliary_loss = DirectAULoss(
@@ -127,6 +135,7 @@ class Trainer:
                     use_uniformity_entity=use_uniformity_entity,
                     use_uniformity_cross=use_uniformity_cross,
                     cross_uniformity_beta=cross_uniformity_beta,
+                    gamma_cross=directau_gamma_cross,
                     learnable_uniformity_scale=getattr(self.args, 'learnable_directau_uniformity_scale', False),
                     use_uniformity_as_alignment=getattr(self.args, 'directau_use_uniformity_alpha', False),
                 ).cuda()
@@ -736,7 +745,9 @@ class Trainer:
                 warmup_scale = min(1.0, (epoch + 1) / float(self.bridge_gamma_warmup_epochs))
             else:
                 warmup_scale = 1.0
-            self.auxiliary_loss.gamma = self.bridge_gamma_base * warmup_scale
+            self.auxiliary_loss.gamma_cross = self.bridge_gamma_base * warmup_scale
+            if hasattr(self.auxiliary_loss, 'gamma'):
+                self.auxiliary_loss.gamma = self.bridge_gamma_base * warmup_scale
 
         losses = AverageMeter('Loss', ':.4')
         top1 = AverageMeter('Acc@1', ':6.2f')
