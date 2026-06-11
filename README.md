@@ -223,9 +223,27 @@ python main.py ... --loss-type alignment --use-negative-sampling --use-uniformit
 - `--directau-gamma`: Weight for uniformity term (default: 1.0)
 - `--directau-eps`: Epsilon for numerical stability (default: 1e-12)
 
+**Uniformity Types** (combine with `--use-uniformity-loss`):
+- `--uniformity-on-query`: Spread query (head+relation) embeddings
+- `--uniformity-on-tail`: Spread tail entity embeddings
+- `--uniformity-on-head`: Spread head entity embeddings
+- `--uniformity-on-entity`: Spread unique head+tail entity embeddings
+- `--uniformity-on-cross`: Cross-uniformity — push queries away from negative tail entities (requires negative sampling)
+
+Total auxiliary loss: `L = L_align + γ (L_unif^q + L_unif^tail + L_unif^head + L_unif^entity + L_cross)`.
+
+Cross-uniformity scale:
+- `--cross-uniformity-beta`: Distance scale inside the cross-uniformity term (default: `--directau-uniformity-scale`)
+
 ### Bridged Loss
 
-The bridged objective combines alignment with a cross-uniformity term that pushes each query away from non-matching tails in the batch (positives are excluded from the denominator). This keeps the hypersphere geometry while using query-conditioned repulsion.
+The bridged objective is shorthand for alignment plus cross-uniformity only (`--loss-type bridge`). It pushes each query away from non-matching tails in the batch (positives are excluded from the denominator). This keeps the hypersphere geometry while using query-conditioned repulsion.
+
+You can also enable cross-uniformity alongside other uniformity terms:
+```bash
+python main.py ... --loss-type alignment --use-uniformity-loss \
+  --uniformity-on-query --uniformity-on-entity --uniformity-on-cross
+```
 
 Key hyperparameters:
 - `--bridge-alpha`: Weight for alignment term (default: 1.0)

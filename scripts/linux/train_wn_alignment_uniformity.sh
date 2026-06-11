@@ -39,14 +39,17 @@ python3 -u main.py \
 --task ${TASK} \
 --batch-size 512 \
 --print-freq 20 \
---additive-margin 0.02 \
+--additive-margin 0 \
 --use-amp \
 --pre-batch 0 \
 --finetune-t \
 --loss-type alignment \
---use-uniformity-loss \
+--uniformity-on-query \
+--uniformity-on-tail \
+--uniformity-on-cross \ 
+--use-negative-sampling \
 --directau-alpha 1 \
---directau-gamma 1 \
+--directau-gamma 0.33 \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4 \
 --no-negative-sampling \

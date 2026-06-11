@@ -52,7 +52,8 @@ class Trainer:
         if loss_type == 'all':
             self.use_uniformity_loss = True
         if self.use_bridge_loss:
-            self.use_uniformity_loss = False
+            self.use_alignment_loss = True
+            self.use_uniformity_loss = True
             self.bridge_gamma_base = float(getattr(self.args, 'bridge_gamma', 1.0))
             self.bridge_gamma_warmup_epochs = int(getattr(self.args, 'bridge_gamma_warmup_epochs', 0))
         if self.use_static_hybrid:
@@ -69,32 +70,35 @@ class Trainer:
         
         self.infonce_loss = nn.CrossEntropyLoss().cuda()
         
-        # if self.use_bridge_loss:
-            # self.auxiliary_loss = BridgedLoss(
-            #     alpha=getattr(self.args, 'bridge_alpha', 1.0),
-            #     gamma=getattr(self.args, 'bridge_gamma', 1.0),
-            #     beta=getattr(self.args, 'bridge_beta', 1.0),
-            #     eps=getattr(self.args, 'directau_eps', 1e-12),
-            # ).cuda()
         if self.use_alignment_loss or self.use_uniformity_loss:
+            use_uniformity_cross = bool(getattr(self.args, 'uniformity_on_cross', False))
+            cross_uniformity_beta = getattr(self.args, 'cross_uniformity_beta', None)
+            directau_alpha = getattr(self.args, 'bridge_alpha', 1.0) if self.use_bridge_loss else getattr(self.args, 'directau_alpha', 1.0)
+            directau_gamma = getattr(self.args, 'bridge_gamma', 1.0) if self.use_bridge_loss else getattr(self.args, 'directau_gamma', 1.0)
+            use_uniformity_query = False if self.use_bridge_loss else bool(getattr(self.args, 'uniformity_on_query', True))
+            use_uniformity_tail = False if self.use_bridge_loss else bool(getattr(self.args, 'uniformity_on_tail', True))
+            use_uniformity_head = False if self.use_bridge_loss else bool(getattr(self.args, 'uniformity_on_head', False))
+            use_uniformity_entity = False if self.use_bridge_loss else bool(getattr(self.args, 'uniformity_on_entity', False))
             if self.use_adaptive_hybrid:
                 self.auxiliary_loss = AdaptiveHybridDirectAULoss(
                     alpha_init=0.5,
-                    align_alpha=getattr(self.args, 'directau_alpha', 1.0),
-                    gamma=getattr(self.args, 'directau_gamma', 1.0),
+                    align_alpha=directau_alpha,
+                    gamma=directau_gamma,
                     eps=getattr(self.args, 'directau_eps', 1e-12),
                     uniformity_scale1=getattr(self.args, 'directau_uniformity_scale_1', 4.0),
                     uniformity_scale2=getattr(self.args, 'directau_uniformity_scale_2', 6.0),
                     use_alignment=self.use_alignment_loss,
                     use_uniformity=self.use_uniformity_loss,
-                    use_uniformity_query=bool(getattr(self.args, 'uniformity_on_query', True)),
-                    use_uniformity_tail=bool(getattr(self.args, 'uniformity_on_tail', True)),
-                    use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
-                    use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
+                    use_uniformity_query=use_uniformity_query,
+                    use_uniformity_tail=use_uniformity_tail,
+                    use_uniformity_head=use_uniformity_head,
+                    use_uniformity_entity=use_uniformity_entity,
+                    use_uniformity_cross=use_uniformity_cross,
+                    cross_uniformity_beta=cross_uniformity_beta,
                 ).cuda()
             elif self.use_static_hybrid:
                 self.auxiliary_loss = StaticHybridDirectAULoss(
-                    alpha=getattr(self.args, 'directau_alpha', 1.0),
+                    alpha=directau_alpha,
                     gamma1=getattr(self.args, 'directau_gamma_1', 0.5),
                     gamma2=getattr(self.args, 'directau_gamma_2', 0.5),
                     eps=getattr(self.args, 'directau_eps', 1e-12),
@@ -102,23 +106,27 @@ class Trainer:
                     uniformity_scale2=getattr(self.args, 'directau_uniformity_scale_2', 6.0),
                     use_alignment=self.use_alignment_loss,
                     use_uniformity=self.use_uniformity_loss,
-                    use_uniformity_query=bool(getattr(self.args, 'uniformity_on_query', True)),
-                    use_uniformity_tail=bool(getattr(self.args, 'uniformity_on_tail', True)),
-                    use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
-                    use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
+                    use_uniformity_query=use_uniformity_query,
+                    use_uniformity_tail=use_uniformity_tail,
+                    use_uniformity_head=use_uniformity_head,
+                    use_uniformity_entity=use_uniformity_entity,
+                    use_uniformity_cross=use_uniformity_cross,
+                    cross_uniformity_beta=cross_uniformity_beta,
                 ).cuda()
             else:
                 self.auxiliary_loss = DirectAULoss(
-                    alpha=getattr(self.args, 'directau_alpha', 1.0),
-                    gamma=getattr(self.args, 'directau_gamma', 1.0),
+                    alpha=directau_alpha,
+                    gamma=directau_gamma,
                     eps=getattr(self.args, 'directau_eps', 1e-12),
                     uniformity_scale=getattr(self.args, 'directau_uniformity_scale', 4.0),
                     use_alignment=self.use_alignment_loss,
                     use_uniformity=self.use_uniformity_loss,
-                    use_uniformity_query=bool(getattr(self.args, 'uniformity_on_query', True)),
-                    use_uniformity_tail=bool(getattr(self.args, 'uniformity_on_tail', True)),
-                    use_uniformity_head=bool(getattr(self.args, 'uniformity_on_head', False)),
-                    use_uniformity_entity=bool(getattr(self.args, 'uniformity_on_entity', False)),
+                    use_uniformity_query=use_uniformity_query,
+                    use_uniformity_tail=use_uniformity_tail,
+                    use_uniformity_head=use_uniformity_head,
+                    use_uniformity_entity=use_uniformity_entity,
+                    use_uniformity_cross=use_uniformity_cross,
+                    cross_uniformity_beta=cross_uniformity_beta,
                     learnable_uniformity_scale=getattr(self.args, 'learnable_directau_uniformity_scale', False),
                     use_uniformity_as_alignment=getattr(self.args, 'directau_use_uniformity_alpha', False),
                 ).cuda()
@@ -169,10 +177,12 @@ class Trainer:
             'uniform_loss_tail': 0.0,
             'uniform_loss_head': 0.0,
             'uniform_loss_entity': 0.0,
+            'uniform_loss_cross': 0.0,
             'uniform_loss_query_scaled': 0.0,
             'uniform_loss_tail_scaled': 0.0,
             'uniform_loss_head_scaled': 0.0,
             'uniform_loss_entity_scaled': 0.0,
+            'uniform_loss_cross_scaled': 0.0,
             'uniform_loss_1': 0.0,
             'uniform_loss_2': 0.0,
             'uniform_loss_1_scaled': 0.0,
@@ -233,10 +243,14 @@ class Trainer:
                 self.last_infonce_loss = 0.0
 
         if self.use_alignment_loss or self.use_uniformity_loss or self.use_bridge_loss:
-            if self.use_bridge_loss:
-                regularizer = self.auxiliary_loss(hr_vector, tail_vector, triplet_mask=triplet_mask)
-            else:
-                regularizer = self.auxiliary_loss(hr_vector, tail_vector, labels, batch_exs=batch_exs, head_vector=head_vector)
+            regularizer = self.auxiliary_loss(
+                hr_vector,
+                tail_vector,
+                labels,
+                batch_exs=batch_exs,
+                head_vector=head_vector,
+                triplet_mask=triplet_mask,
+            )
             total_loss = regularizer['loss'] if total_loss is None else total_loss + regularizer['loss']
 
             # Store last regularizer components for logging/inspection
@@ -250,10 +264,12 @@ class Trainer:
                     'uniform_loss_tail': float(regularizer.get('uniform_loss_tail', 0.0).item() if hasattr(regularizer.get('uniform_loss_tail', 0.0), 'item') else regularizer.get('uniform_loss_tail', 0.0)),
                     'uniform_loss_head': float(regularizer.get('uniform_loss_head', 0.0).item() if hasattr(regularizer.get('uniform_loss_head', 0.0), 'item') else regularizer.get('uniform_loss_head', 0.0)),
                     'uniform_loss_entity': float(regularizer.get('uniform_loss_entity', 0.0).item() if hasattr(regularizer.get('uniform_loss_entity', 0.0), 'item') else regularizer.get('uniform_loss_entity', 0.0)),
+                    'uniform_loss_cross': float(regularizer.get('uniform_loss_cross', 0.0).item() if hasattr(regularizer.get('uniform_loss_cross', 0.0), 'item') else regularizer.get('uniform_loss_cross', 0.0)),
                     'uniform_loss_query_scaled': float(regularizer.get('uniform_loss_query_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_query_scaled', 0.0), 'item') else regularizer.get('uniform_loss_query_scaled', 0.0)),
                     'uniform_loss_tail_scaled': float(regularizer.get('uniform_loss_tail_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_tail_scaled', 0.0), 'item') else regularizer.get('uniform_loss_tail_scaled', 0.0)),
                     'uniform_loss_head_scaled': float(regularizer.get('uniform_loss_head_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_head_scaled', 0.0), 'item') else regularizer.get('uniform_loss_head_scaled', 0.0)),
                     'uniform_loss_entity_scaled': float(regularizer.get('uniform_loss_entity_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_entity_scaled', 0.0), 'item') else regularizer.get('uniform_loss_entity_scaled', 0.0)),
+                    'uniform_loss_cross_scaled': float(regularizer.get('uniform_loss_cross_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_cross_scaled', 0.0), 'item') else regularizer.get('uniform_loss_cross_scaled', 0.0)),
                     'uniform_loss_1': float(regularizer.get('uniform_loss_1', 0.0).item() if hasattr(regularizer.get('uniform_loss_1', 0.0), 'item') else regularizer.get('uniform_loss_1', 0.0)),
                     'uniform_loss_2': float(regularizer.get('uniform_loss_2', 0.0).item() if hasattr(regularizer.get('uniform_loss_2', 0.0), 'item') else regularizer.get('uniform_loss_2', 0.0)),
                     'uniform_loss_1_scaled': float(regularizer.get('uniform_loss_1_scaled', 0.0).item() if hasattr(regularizer.get('uniform_loss_1_scaled', 0.0), 'item') else regularizer.get('uniform_loss_1_scaled', 0.0)),
@@ -270,10 +286,12 @@ class Trainer:
                     'uniform_loss_tail': 0.0,
                     'uniform_loss_head': 0.0,
                     'uniform_loss_entity': 0.0,
+                    'uniform_loss_cross': 0.0,
                     'uniform_loss_query_scaled': 0.0,
                     'uniform_loss_tail_scaled': 0.0,
                     'uniform_loss_head_scaled': 0.0,
                     'uniform_loss_entity_scaled': 0.0,
+                    'uniform_loss_cross_scaled': 0.0,
                     'uniform_loss_1': 0.0,
                     'uniform_loss_2': 0.0,
                     'uniform_loss_1_scaled': 0.0,
@@ -730,6 +748,7 @@ class Trainer:
         uniform_t_meter = AverageMeter('UT', ':.6f')
         uniform_h_meter = AverageMeter('UH', ':.6f')
         uniform_e_meter = AverageMeter('UE', ':.6f')
+        uniform_x_meter = AverageMeter('UX', ':.6f')
         uniform_s1_meter = AverageMeter('U1', ':.6f')
         uniform_s2_meter = AverageMeter('U2', ':.6f')
         infonce_meter = AverageMeter('InfoNCE', ':.6f')
@@ -747,6 +766,7 @@ class Trainer:
                 uniform_t_meter,
                 uniform_h_meter,
                 uniform_e_meter,
+                uniform_x_meter,
                 uniform_s1_meter,
                 uniform_s2_meter,
                 infonce_meter,
@@ -793,6 +813,7 @@ class Trainer:
                 uniform_t_meter.update(self.last_regularizer.get('uniform_loss_tail_scaled', self.last_regularizer.get('uniform_loss_tail', 0.0)), batch_size)
                 uniform_h_meter.update(self.last_regularizer.get('uniform_loss_head_scaled', self.last_regularizer.get('uniform_loss_head', 0.0)), batch_size)
                 uniform_e_meter.update(self.last_regularizer.get('uniform_loss_entity_scaled', self.last_regularizer.get('uniform_loss_entity', 0.0)), batch_size)
+                uniform_x_meter.update(self.last_regularizer.get('uniform_loss_cross_scaled', self.last_regularizer.get('uniform_loss_cross', 0.0)), batch_size)
                 uniform_s1_meter.update(self.last_regularizer.get('uniform_loss_1_scaled', self.last_regularizer.get('uniform_loss_1', 0.0)), batch_size)
                 uniform_s2_meter.update(self.last_regularizer.get('uniform_loss_2_scaled', self.last_regularizer.get('uniform_loss_2', 0.0)), batch_size)
             # Update InfoNCE meter

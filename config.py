@@ -59,6 +59,10 @@ parser.add_argument('--uniformity-on-head', action='store_true',
                     help='add uniformity term over head entity vectors')
 parser.add_argument('--uniformity-on-entity', action='store_true',
                     help='add uniformity term over unique head+tail entity vectors')
+parser.add_argument('--uniformity-on-cross', action='store_true',
+                    help='add cross-uniformity term (query repulsion from negative tail entities)')
+parser.add_argument('--cross-uniformity-beta', default=None, type=float, metavar='N',
+                    help='scale for cross-uniformity distances; default: --directau-uniformity-scale or --bridge-beta')
 parser.add_argument('--directau-alpha', default=3.0, type=float, metavar='N',
                     help='weight for DirectAU alignment loss')
 parser.add_argument('--directau-gamma', default=0.5, type=float, metavar='N',
@@ -210,21 +214,39 @@ if args.adaptive_hybrid:
     args.loss_type = 'alignment'
     args.use_uniformity_loss = True
 
-if args.uniformity_on_query or args.uniformity_on_tail or args.uniformity_on_head or args.uniformity_on_entity:
+if args.uniformity_on_query or args.uniformity_on_tail or args.uniformity_on_head or args.uniformity_on_entity or args.uniformity_on_cross:
     args.use_uniformity_loss = True
 
 if args.loss_type == 'all':
     args.use_uniformity_loss = True
 
-if args.use_uniformity_loss and not args.uniformity_on_query and not args.uniformity_on_tail:
+if args.loss_type == 'bridge':
+    args.use_uniformity_loss = True
+    args.uniformity_on_cross = True
+    args.uniformity_on_query = False
+    args.uniformity_on_tail = False
+    args.uniformity_on_head = False
+    args.uniformity_on_entity = False
+    args.use_negative_sampling = True
+
+if args.use_uniformity_loss and not args.uniformity_on_query and not args.uniformity_on_tail and not args.uniformity_on_cross:
     args.uniformity_on_query = True
     args.uniformity_on_tail = True
+
+if args.uniformity_on_cross:
+    args.use_negative_sampling = True
 
 if args.bridge_beta is None:
     if args.t > 0:
         args.bridge_beta = 1.0 / (2.0 * args.t)
     else:
         args.bridge_beta = 1.0
+
+if args.cross_uniformity_beta is None:
+    if args.uniformity_on_cross and args.loss_type == 'bridge':
+        args.cross_uniformity_beta = args.bridge_beta
+    else:
+        args.cross_uniformity_beta = args.directau_uniformity_scale
 
 assert args.directau_gamma >= 0
 assert args.directau_gamma_1 >= 0
@@ -237,6 +259,7 @@ assert args.bridge_alpha >= 0
 assert args.bridge_gamma >= 0
 assert args.bridge_beta > 0
 assert args.bridge_gamma_warmup_epochs >= 0
+assert args.cross_uniformity_beta > 0
 assert args.chunk_size > 0
 assert args.eval_interval_epochs > 0
 
