@@ -46,7 +46,7 @@ python3 -u main.py \
 --loss-type alignment \
 --uniformity-on-query \
 --uniformity-on-tail \
---uniformity-on-cross \ 
+--uniformity-on-cross \
 --use-negative-sampling \
 --directau-alpha 1 \
 --directau-gamma 0.33 \
