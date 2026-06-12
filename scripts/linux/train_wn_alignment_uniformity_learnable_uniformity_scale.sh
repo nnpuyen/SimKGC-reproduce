@@ -47,13 +47,12 @@ python3 -u main.py \
 --uniformity-on-query \
 --uniformity-on-tail \
 --uniformity-on-cross \
---directau-alpha 1 \
---directau-gamma 0.5 \
---directau-gamma-cross 1 \
+--directau-alpha 3 \
+--directau-gamma 0.3333 \
+--directau-gamma-cross 0.8 \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4.5 \
 --learnable-directau-uniformity-scale \
---directau-use-uniformity-alpha \
 --log-uniformity-lr 8e-5 \
 --no-negative-sampling \
 --epochs 50 \
