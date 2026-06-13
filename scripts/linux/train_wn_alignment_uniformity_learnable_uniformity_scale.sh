@@ -44,12 +44,10 @@ python3 -u main.py \
 --pre-batch 0 \
 --finetune-t \
 --loss-type alignment \
---uniformity-on-query \
---uniformity-on-tail \
 --uniformity-on-cross \
---directau-alpha 3 \
---directau-gamma 0.3333 \
---directau-gamma-cross 0.8 \
+--directau-alpha 1.0\
+--directau-gamma 0.0 \
+--directau-gamma-cross 1.0 \
 --directau-eps 1e-12 \
 --directau-uniformity-scale 4.5 \
 --learnable-directau-uniformity-scale \
