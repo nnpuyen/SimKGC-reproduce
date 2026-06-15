@@ -20,7 +20,7 @@ from doc import Dataset, collate
 from utils import AverageMeter, ProgressMeter
 from utils import save_checkpoint, delete_old_ckt, report_num_trainable_parameters, move_to_cuda, get_model_obj, call_model_forward
 from metric import accuracy
-from models import build_model, ModelOutput, DirectAULoss, StaticHybridDirectAULoss, AdaptiveHybridDirectAULoss
+from models import build_model, ModelOutput, DirectAULoss, StaticHybridDirectAULoss, AdaptiveHybridDirectAULoss, filter_shared_encoder_state_dict
 from dict_hub import build_tokenizer, get_entity_dict
 from logger_config import logger
 import os 
@@ -622,6 +622,8 @@ class Trainer:
             if k.startswith('module.'):
                 k = k[len('module.'):]
             new_state_dict[k] = v
+        new_state_dict = filter_shared_encoder_state_dict(
+            new_state_dict, getattr(model_obj, 'shared_encoder', False))
         model_obj.load_state_dict(new_state_dict, strict=True)
         logger.info('Loaded model weights for evaluation from %s', checkpoint_path)
         return True
@@ -1014,6 +1016,8 @@ class Trainer:
                 if k.startswith('module.'):
                     k = k[len('module.'):]
                 new_state_dict[k] = v
+            new_state_dict = filter_shared_encoder_state_dict(
+                new_state_dict, getattr(model_obj, 'shared_encoder', False))
             model_obj.load_state_dict(new_state_dict, strict=True)
         else:
             logger.warning('Checkpoint missing state_dict; skip model weight load')

@@ -137,6 +137,8 @@ parser.add_argument('--max-num-tokens', default=50, type=int,
                     help='maximum number of tokens')
 parser.add_argument('--use-self-negative', action='store_true',
                     help='use head entity as negative')
+parser.add_argument('--shared-encoder', action='store_true',
+                    help='use a single encoder for query (head+relation) and tail/head entities')
 
 parser.add_argument('-j', '--workers', default=2, type=int, metavar='N',
                     help='number of data loading workers')

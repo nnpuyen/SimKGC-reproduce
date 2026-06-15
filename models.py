@@ -755,6 +755,17 @@ def build_model(args) -> nn.Module:
     return CustomBertModel(args)
 
 
+def filter_shared_encoder_state_dict(state_dict: dict, shared_encoder: bool) -> dict:
+    if not shared_encoder:
+        return state_dict
+    filtered = {k: v for k, v in state_dict.items() if not k.startswith('tail_bert.')}
+    if len(filtered) < len(state_dict):
+        from logger_config import logger
+        logger.info('Dropped %d tail_bert keys for shared-encoder loading',
+                    len(state_dict) - len(filtered))
+    return filtered
+
+
 @dataclass
 class ModelOutput:
     logits: torch.tensor
@@ -794,8 +805,16 @@ class CustomBertModel(nn.Module, ABC):
         self.offset = 0
         self.pre_batch_exs = [None for _ in range(num_pre_batch_vectors)]
 
+        self.shared_encoder = bool(getattr(args, 'shared_encoder', False))
         self.hr_bert = AutoModel.from_pretrained(args.pretrained_model)
-        self.tail_bert = deepcopy(self.hr_bert)
+        if self.shared_encoder:
+            self.tail_bert = None
+        else:
+            self.tail_bert = deepcopy(self.hr_bert)
+
+    @property
+    def ent_encoder(self):
+        return self.hr_bert if self.shared_encoder else self.tail_bert
 
     def _encode(self, encoder, token_ids, mask, token_type_ids):
         outputs = encoder(input_ids=token_ids,
@@ -822,12 +841,12 @@ class CustomBertModel(nn.Module, ABC):
                                  mask=hr_mask,
                                  token_type_ids=hr_token_type_ids)
 
-        tail_vector = self._encode(self.tail_bert,
+        tail_vector = self._encode(self.ent_encoder,
                                    token_ids=tail_token_ids,
                                    mask=tail_mask,
                                    token_type_ids=tail_token_type_ids)
 
-        head_vector = self._encode(self.tail_bert,
+        head_vector = self._encode(self.ent_encoder,
                                    token_ids=head_token_ids,
                                    mask=head_mask,
                                    token_type_ids=head_token_type_ids)
@@ -927,7 +946,7 @@ class CustomBertModel(nn.Module, ABC):
 
     @torch.no_grad()
     def predict_ent_embedding(self, tail_token_ids, tail_mask, tail_token_type_ids, **kwargs) -> dict:
-        ent_vectors = self._encode(self.tail_bert,
+        ent_vectors = self._encode(self.ent_encoder,
                                    token_ids=tail_token_ids,
                                    mask=tail_mask,
                                    token_type_ids=tail_token_type_ids)

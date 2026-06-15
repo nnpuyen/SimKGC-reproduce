@@ -10,7 +10,7 @@ from collections import OrderedDict
 
 from doc import collate, Example, Dataset
 from config import args
-from models import build_model
+from models import build_model, filter_shared_encoder_state_dict
 from utils import AttrDict, move_to_cuda, call_model_forward
 from dict_hub import build_tokenizer
 from logger_config import logger
@@ -64,6 +64,8 @@ class BertPredictor:
             if k.startswith('module.'):
                 k = k[len('module.'):]
             new_state_dict[k] = v
+        new_state_dict = filter_shared_encoder_state_dict(
+            new_state_dict, getattr(self.model, 'shared_encoder', False))
         self.model.load_state_dict(new_state_dict, strict=True)
         self.model.eval()
 
